@@ -2,11 +2,13 @@
 """Mirror an already signed GitHub release APK and its generated manifest to R2."""
 import argparse
 import hashlib
+from importlib.util import find_spec
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import urllib.request
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -77,7 +79,8 @@ def main():
     # Avoid optional SDK checksums unsupported by some S3-compatible multipart paths.
     env['AWS_REQUEST_CHECKSUM_CALCULATION'] = 'when_required'
     env['AWS_RESPONSE_CHECKSUM_VALIDATION'] = 'when_required'
-    cli = ['aws', '--endpoint-url', args.endpoint, '--region', 'auto']
+    cli = [sys.executable, '-m', 'awscli'] if find_spec('awscli') else ['aws']
+    cli += ['--endpoint-url', args.endpoint, '--region', 'auto']
     if args.profile:
         cli += ['--profile', args.profile]
 
