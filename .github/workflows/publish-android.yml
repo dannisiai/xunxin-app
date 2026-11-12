@@ -87,7 +87,7 @@ jobs:
               raise SystemExit('Production signing certificate is not configured')
           package = temp / 'package'
           package.mkdir()
-          notes = os.environ.get('REQUESTED_NOTES') or '移除三处编码的使用声明弹窗；伴宠与一起看共用每个 AI 的自定义头像；无头像显示名字；保留原对话气泡并支持拖动；语音参考音频支持 WAV、MP3、FLAC、M4A；一起看语音回复与试听支持 Qwen PCM/WAV 流式播放。'
+          notes = os.environ.get('REQUESTED_NOTES') or '更新安装包默认使用免费加速下载；加速下载失败自动回退 GitHub；继续校验摘要和正式签名，保留流式语音功能。'
           (package / 'notes.md').write_text(notes, encoding='utf-8')
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write(f'SHELL_VERSION_CODE={code}\nSHELL_VERSION_NAME={version}\nRELEASE_TAG=android-v{version}-{code}\n')
@@ -126,8 +126,8 @@ jobs:
         run: |
           set -eu
           if [ "${CLOUD_SIGNING_CONFIGURED:-false}" = true ]; then
-            cp android-shell/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME.apk"
-            apk="$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME.apk"
+            cp android-shell/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/package/xunxin.apk"
+            apk="$RUNNER_TEMP/package/xunxin.apk"
           else
             cp android-shell/app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME-unsigned.apk"
             apk="$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME-unsigned.apk"
@@ -142,7 +142,7 @@ jobs:
           if [ "${CLOUD_SIGNING_CONFIGURED:-false}" = true ]; then
             force=()
             if [ "$FORCE_UPDATE" = true ]; then force=(--force-update); fi
-            python3 scripts/create-android-update-feed.py --apk "$apk" --apk-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/xunxin-$SHELL_VERSION_NAME.apk" --notes-file "$RUNNER_TEMP/package/notes.md" --expected-certificate-sha256 "$SIGNING_CERT_SHA256" --output "$RUNNER_TEMP/package/version.json" "${force[@]}"
+            python3 scripts/create-android-update-feed.py --apk "$apk" --apk-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/xunxin.apk" --notes-file "$RUNNER_TEMP/package/notes.md" --download-notes-output "$RUNNER_TEMP/package/download-notes.md" --expected-certificate-sha256 "$SIGNING_CERT_SHA256" --output "$RUNNER_TEMP/package/version.json" "${force[@]}"
           fi
       - name: Preserve release artifacts
         uses: actions/upload-artifact@v4
@@ -157,7 +157,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME.apk" "$RUNNER_TEMP/package/version.json" "$RUNNER_TEMP/package/popup-audit.json" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "寻信 $SHELL_VERSION_NAME" --notes-file "$RUNNER_TEMP/package/notes.md" --latest
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/package/xunxin.apk" "$RUNNER_TEMP/package/version.json" "$RUNNER_TEMP/package/popup-audit.json" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "寻信 $SHELL_VERSION_NAME" --notes-file "$RUNNER_TEMP/package/download-notes.md" --latest
           if gh release view android-ota-stable --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload android-ota-stable "$RUNNER_TEMP/package/version.json" --repo "$GITHUB_REPOSITORY" --clobber
           else

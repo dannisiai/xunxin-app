@@ -17,6 +17,16 @@ def https_url(value):
     return value
 
 
+def preferred_apk_url(value):
+    """Only public GitHub release assets use the fixed free download accelerator."""
+    prefix = "https://gh-proxy.com/"
+    direct = value.removeprefix(prefix)
+    url = urlsplit(direct)
+    if url.scheme == "https" and url.netloc == "github.com" and re.fullmatch(r"/[^/]+/[^/]+/releases/download/[^/]+/[^/]+", url.path):
+        return prefix + direct, direct
+    return value, value
+
+
 def tool(name, explicit):
     if explicit:
         return explicit
@@ -41,6 +51,7 @@ def main():
     parser.add_argument("--apk", type=Path, required=True)
     parser.add_argument("--apk-url", type=https_url, required=True)
     parser.add_argument("--notes-file", type=Path, required=True)
+    parser.add_argument("--download-notes-output", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-certificate-sha256", required=True)
     parser.add_argument("--package-name", default="app.floatphone.shell")
@@ -73,7 +84,8 @@ def main():
     with args.apk.open("rb") as apk:
         for chunk in iter(lambda: apk.read(1024 * 1024), b""):
             digest.update(chunk)
-    manifest = {"versionCode": code, "versionName": name, "apkUrl": args.apk_url,
+    preferred, original = preferred_apk_url(args.apk_url)
+    manifest = {"versionCode": code, "versionName": name, "apkUrl": preferred,
                 "sha256": digest.hexdigest(), "forceUpdate": args.force_update, "releaseNotes": notes}
     content = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     if len(content.encode("utf-8")) > 65536:
@@ -82,6 +94,12 @@ def main():
     temporary = args.output.with_suffix(args.output.suffix + ".tmp")
     temporary.write_text(content, encoding="utf-8")
     temporary.replace(args.output)
+    if args.download_notes_output:
+        args.download_notes_output.parent.mkdir(parents=True, exist_ok=True)
+        links = f"[加速下载安装包（默认）]({preferred})"
+        if original != preferred:
+            links += f" · [GitHub 原始下载（备用）]({original})"
+        args.download_notes_output.write_text(links + "\n\n" + notes.rstrip() + "\n", encoding="utf-8")
     print(f"Generated {args.output}: {name} ({code}), SHA-256 {digest.hexdigest()}")
 
 

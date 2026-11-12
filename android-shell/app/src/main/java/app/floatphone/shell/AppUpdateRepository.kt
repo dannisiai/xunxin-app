@@ -70,6 +70,7 @@ data class AppUpdateState(
 }
 private class UpdateCancelled : IOException()
 private class RejectedUpdate(message: String) : IOException(message)
+private class DownloadSourceUnavailable(message: String, cause: IOException? = null) : IOException(message, cause)
 
 /** A single process-wide task, private resumable files and immutable UI snapshots. No user data is edited. */
 class AppUpdateRepository private constructor(private val context: Context) {
@@ -185,10 +186,7 @@ class AppUpdateRepository private constructor(private val context: Context) {
                 publish(state.copy(phase = AppUpdatePhase.VERIFYING))
                 verify(manifest, verifiedApk)
             } else {
-                downloadFile(manifest)
-                ensureActive()
-                publish(state.copy(phase = AppUpdatePhase.VERIFYING, downloaded = part.length(), total = part.length()))
-                verify(manifest, part)
+                downloadAndVerify(manifest)
                 ensureActive()
                 if (!part.renameTo(verifiedApk)) throw IOException("无法保存已验证的安装包")
             }
@@ -224,12 +222,13 @@ class AppUpdateRepository private constructor(private val context: Context) {
     private fun readCandidate(): JSONObject? = runCatching {
         candidate.openRead().use { JSONObject(it.bufferedReader().readText()) }
     }.getOrNull()
-    private fun writeCandidate(manifest: AppUpdateManifest, etag: String, modified: String, total: Long) {
+    private fun writeCandidate(manifest: AppUpdateManifest, etag: String, modified: String, total: Long,
+                               sourceUrl: String = manifest.apkUrl) {
         root.mkdirs()
         val output = candidate.startWrite()
         try {
             output.write(JSONObject().put("identity", manifest.identity).put("etag", etag)
-                .put("modified", modified).put("total", total).toString().toByteArray(Charsets.UTF_8))
+                .put("modified", modified).put("total", total).put("sourceUrl", sourceUrl).toString().toByteArray(Charsets.UTF_8))
             candidate.finishWrite(output)
         } catch (failure: Exception) { candidate.failWrite(output); throw failure }
     }
@@ -237,13 +236,51 @@ class AppUpdateRepository private constructor(private val context: Context) {
         // Fixed private paths only: never touch the WebView, IndexedDB, media, backups or installed APK.
         part.delete(); verifiedApk.delete(); candidate.delete()
     }
-    private fun downloadFile(manifest: AppUpdateManifest) {
+    private fun downloadSources(raw: String): List<String> {
+        val prefix = "https://gh-proxy.com/"
+        val direct = if (raw.startsWith(prefix)) raw.removePrefix(prefix) else raw
+        val url = runCatching { direct.toHttpUrl() }.getOrNull() ?: return listOf(raw)
+        val path = url.pathSegments
+        if (!url.isHttps || url.host != "github.com" || url.port != 443
+            || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null
+            || path.size < 6 || path[2] != "releases" || path[3] != "download") return listOf(raw)
+        return listOf(prefix + direct, direct).distinct()
+    }
+    private fun downloadAndVerify(manifest: AppUpdateManifest) {
+        val sources = downloadSources(manifest.apkUrl)
+        // Resume the same source after a pause; never splice bytes or validators from two sources.
+        val savedSource = readCandidate()?.optString("sourceUrl").orEmpty()
+        val first = sources.indexOf(savedSource).coerceAtLeast(0)
+        for (index in first..sources.lastIndex) {
+            ensureActive()
+            val source = sources[index]
+            if (readCandidate()?.optString("sourceUrl") != source) {
+                clearDownload()
+                writeCandidate(manifest, "", "", -1, source)
+            }
+            try {
+                downloadFile(manifest, source)
+                ensureActive()
+                publish(state.copy(phase = AppUpdatePhase.VERIFYING, downloaded = part.length(), total = part.length()))
+                verify(manifest, part)
+                return
+            } catch (failure: IOException) {
+                ensureActive()
+                // Storage errors and user cancellation must not trigger another network download.
+                if (index == sources.lastIndex || (failure !is DownloadSourceUnavailable && failure !is RejectedUpdate)) throw failure
+                clearDownload()
+                publish(state.copy(phase = AppUpdatePhase.DOWNLOADING, downloaded = 0, total = -1,
+                    message = "加速下载未成功，正在尝试备用下载地址"))
+            }
+        }
+    }
+    private fun downloadFile(manifest: AppUpdateManifest, sourceUrl: String) {
         var restarted = false
         while (true) {
             ensureActive()
             var offset = part.length()
             val metadata = readCandidate()
-            val request = Request.Builder().url(manifest.apkUrl).header("Accept-Encoding", "identity")
+            val request = Request.Builder().url(sourceUrl).header("Accept-Encoding", "identity")
             if (offset > 0) {
                 request.header("Range", "bytes=$offset-")
                 val etag = metadata?.optString("etag").orEmpty()
@@ -251,38 +288,40 @@ class AppUpdateRepository private constructor(private val context: Context) {
                 if (etag.startsWith('"') && etag.endsWith('"')) request.header("If-Range", etag)
                 else if (modified.isNotBlank()) request.header("If-Range", modified)
             }
-            execute(request.build()).use { response ->
+            val received = try { execute(request.build()) }
+                catch (failure: IOException) { throw DownloadSourceUnavailable("下载连接失败", failure) }
+            received.use { response ->
                 if (response.code == 416) {
                     val size = Regex("bytes \\*/([0-9]+)").matchEntire(response.header("Content-Range").orEmpty())
                         ?.groupValues?.get(1)?.toLongOrNull()
                     if (offset > 0 && size == offset && metadata?.optLong("total", -1) == offset) return
-                    if (restarted) throw IOException("服务器不接受断点，请重试")
-                    part.delete(); writeCandidate(manifest, "", "", -1); restarted = true
+                    if (restarted) throw DownloadSourceUnavailable("服务器不接受断点，请重试")
+                    part.delete(); writeCandidate(manifest, "", "", -1, sourceUrl); restarted = true
                     return@use
                 }
-                if (response.code != 200 && response.code != 206) throw IOException("下载失败（HTTP ${response.code}）")
+                if (response.code != 200 && response.code != 206) throw DownloadSourceUnavailable("下载失败（HTTP ${response.code}）")
                 val encoding = response.header("Content-Encoding")
-                if (encoding != null && !encoding.equals("identity", true)) throw IOException("下载服务器必须支持未压缩的 APK 响应")
-                val body = response.body ?: throw IOException("下载内容为空")
+                if (encoding != null && !encoding.equals("identity", true)) throw DownloadSourceUnavailable("下载服务器必须支持未压缩的 APK 响应")
+                val body = response.body ?: throw DownloadSourceUnavailable("下载内容为空")
                 var segmentEnd = -1L
                 val total: Long
                 if (response.code == 206) {
                     val range = Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+)")
-                        .matchEntire(response.header("Content-Range").orEmpty()) ?: throw IOException("服务器断点响应格式无效")
+                        .matchEntire(response.header("Content-Range").orEmpty()) ?: throw DownloadSourceUnavailable("服务器断点响应格式无效")
                     val start = range.groupValues[1].toLongOrNull() ?: -1
                     segmentEnd = range.groupValues[2].toLongOrNull() ?: -1
                     total = range.groupValues[3].toLongOrNull() ?: -1
                     if (start != offset || segmentEnd < start || total <= segmentEnd || total > MAX_APK
                         || (body.contentLength() >= 0 && body.contentLength() != segmentEnd - start + 1)) {
-                        throw IOException("服务器返回了不匹配的断点范围")
+                        throw DownloadSourceUnavailable("服务器返回了不匹配的断点范围")
                     }
                 } else {
                     // A server ignoring Range (or an If-Range mismatch) means restart, never append a 200 body.
                     offset = 0; total = body.contentLength()
-                    if (total > MAX_APK || total == 0L) throw IOException("APK 大小无效")
+                    if (total > MAX_APK || total == 0L) throw DownloadSourceUnavailable("APK 大小无效")
                 }
                 if (total > 0 && root.usableSpace < total - offset + 16 * 1024 * 1024) throw IOException("存储空间不足，请清理后重试")
-                writeCandidate(manifest, response.header("ETag").orEmpty(), response.header("Last-Modified").orEmpty(), total)
+                writeCandidate(manifest, response.header("ETag").orEmpty(), response.header("Last-Modified").orEmpty(), total, sourceUrl)
                 var downloaded = offset
                 var lastProgress = 0L
                 FileOutputStream(part, response.code == 206 && offset > 0).use { output ->
@@ -290,7 +329,8 @@ class AppUpdateRepository private constructor(private val context: Context) {
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
                             ensureActive()
-                            val count = input.read(buffer)
+                            val count = try { input.read(buffer) }
+                                catch (failure: IOException) { throw DownloadSourceUnavailable("下载中断", failure) }
                             if (count < 0) break
                             downloaded += count
                             if (downloaded > MAX_APK || (total > 0 && downloaded > total)
@@ -305,8 +345,8 @@ class AppUpdateRepository private constructor(private val context: Context) {
                     }
                     output.fd.sync()
                 }
-                if (segmentEnd >= 0 && downloaded != segmentEnd + 1) throw IOException("下载中断，可从断点继续")
-                if (total >= 0 && downloaded < total && segmentEnd < 0) throw IOException("下载不完整，可继续下载")
+                if (segmentEnd >= 0 && downloaded != segmentEnd + 1) throw DownloadSourceUnavailable("下载中断，可从断点继续")
+                if (total >= 0 && downloaded < total && segmentEnd < 0) throw DownloadSourceUnavailable("下载不完整，可继续下载")
                 if (total < 0 || downloaded == total) return
             }
         }

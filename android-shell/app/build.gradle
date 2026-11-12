@@ -13,8 +13,8 @@ def parsedUpdateUrl = new URI(updateUrl)
 if (parsedUpdateUrl.scheme != 'https' || !parsedUpdateUrl.host || parsedUpdateUrl.userInfo || parsedUpdateUrl.fragment) {
     throw new GradleException('SHELL_UPDATE_URL must be an HTTPS URL without credentials or fragments')
 }
-def appVersionCode = (System.getenv("SHELL_VERSION_CODE") ?: "23").toInteger()
-def appVersionName = System.getenv("SHELL_VERSION_NAME") ?: "1.0.0"
+def appVersionCode = (System.getenv("SHELL_VERSION_CODE") ?: "24").toInteger()
+def appVersionName = System.getenv("SHELL_VERSION_NAME") ?: "1.0.1"
 if (appVersionCode <= 0 || !(appVersionName ==~ /[A-Za-z0-9][A-Za-z0-9._+-]{0,79}/)) throw new GradleException('Invalid application version')
 def siteUrl = (localBundle ? "http://localhost:18471" : (System.getenv("SHELL_SITE_URL") ?: "https://example.invalid")).replaceAll('/+$', '')
 
