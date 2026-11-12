@@ -5,8 +5,13 @@ export async function fetchTtsResponse(url: string, init: RequestInit, timeoutMs
     let timedOut = false;
     const abort = () => { controller.abort(external?.reason); cleanup(); };
     const cleanup = () => { clearTimeout(timer); external?.removeEventListener("abort", abort); };
-    const failure = (error: unknown) => timedOut
-        ? new Error(`语音合成超时（超过 ${Math.round(timeoutMs / 1000)} 秒）`) : error;
+    const failure = (error: unknown, receiving = false) => {
+        if (timedOut) return new Error(`语音合成超时（超过 ${Math.round(timeoutMs / 1000)} 秒）`);
+        if (!external?.aborted && (error instanceof TypeError || typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "NetworkError")) {
+            return new Error(receiving ? "接收语音时连接中断，请检查语音服务器和手机网络" : "无法建立语音连接，请检查接口地址、手机网络和 HTTPS 证书");
+        }
+        return error;
+    };
     const timer = setTimeout(() => { timedOut = true; controller.abort(); cleanup(); }, timeoutMs);
     if (external?.aborted) abort(); else external?.addEventListener("abort", abort, { once: true });
     try {
@@ -19,7 +24,7 @@ export async function fetchTtsResponse(url: string, init: RequestInit, timeoutMs
                     const chunk = await reader.read();
                     if (chunk.done) { cleanup(); output.close(); }
                     else output.enqueue(chunk.value);
-                } catch (error) { cleanup(); output.error(failure(error)); }
+                } catch (error) { cleanup(); output.error(failure(error, true)); }
             },
             async cancel(reason) {
                 controller.abort(reason); cleanup();

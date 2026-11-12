@@ -87,7 +87,7 @@ jobs:
               raise SystemExit('Production signing certificate is not configured')
           package = temp / 'package'
           package.mkdir()
-          notes = os.environ.get('REQUESTED_NOTES') or '更新安装包默认使用免费加速下载；加速下载失败自动回退 GitHub；继续校验摘要和正式签名，保留流式语音功能。'
+          notes = os.environ.get('REQUESTED_NOTES') or '修补安卓版 Qwen 试听与一起看语音的取流兼容：通过 App 本机服务保持语音连接并继续分段播放；连接失败、超时及取流中断显示更明确的错误；保留克隆音频、默认加速更新及签名校验。'
           (package / 'notes.md').write_text(notes, encoding='utf-8')
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write(f'SHELL_VERSION_CODE={code}\nSHELL_VERSION_NAME={version}\nRELEASE_TAG=android-v{version}-{code}\n')

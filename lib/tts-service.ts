@@ -14,19 +14,31 @@ export type VoiceApiConfigResolved = VoiceApiConfig;
 type SpeechPlayback = { promise: Promise<void>; abort: () => void };
 let streamingPlaybackReservations = 0;
 
-/** A single streaming generation request, also consumed by the Android foreground overlay. */
-export async function requestStreamingSpeech(text: string, config: VoiceApiConfig, signal: AbortSignal): Promise<Response> {
+async function requestQwenSpeech(text: string, config: VoiceApiConfig, stream: boolean, signal?: AbortSignal): Promise<Response> {
     if (!isQwenTts(config)) throw new Error("当前语音接口未启用 Qwen 流式协议");
-    const response = await fetchWithTimeout(buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
+    // The bundled Android runtime already has a cookie-protected loopback server.
+    // Let it keep the TLS/stream connection instead of WebView cross-origin fetch.
+    const local = typeof window !== "undefined" && window.location.hostname === "localhost"
+        && window.location.port === "18471" && Boolean((window as Window & { AndroidShell?: unknown }).AndroidShell);
+    const response = await fetchWithTimeout(local ? "/api/voice/qwen-speech" : buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
         method: "POST", signal,
-        headers: { "Content-Type": "application/json", ...(config.apiKey?.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) },
-        body: JSON.stringify(qwenSpeechBody(text, config, true)),
+        headers: { "Content-Type": "application/json", ...(!local && config.apiKey?.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) },
+        body: JSON.stringify(local ? { text, stream, config: {
+            provider: config.provider, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
+            defaultVoice: config.defaultVoice, referenceAudio: config.referenceAudio, referenceText: config.referenceText,
+        } } : qwenSpeechBody(text, config, stream)),
     }, 240_000);
     if (!response.ok) {
-        await response.body?.cancel();
-        throw new Error(`Qwen TTS 请求失败（HTTP ${response.status}）`);
+        const detail = local ? await response.json().catch(() => null) : null;
+        if (!local) await response.body?.cancel();
+        throw new Error(typeof detail?.error === "string" ? detail.error : `Qwen TTS 请求失败（HTTP ${response.status}）`);
     }
     return response;
+}
+
+/** A single streaming generation request, also consumed by the Android foreground overlay. */
+export function requestStreamingSpeech(text: string, config: VoiceApiConfig, signal: AbortSignal): Promise<Response> {
+    return requestQwenSpeech(text, config, true, signal);
 }
 
 /** Qwen calls/preview stream PCM; cached voice messages can still use synthesizeSpeech. */
@@ -299,13 +311,13 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig, signal?: A
         if (!blob.size) throw new Error("语音合成接口返回了空音频");
         return blob;
     }
-    const response = await fetchWithTimeout(buildCompatibleVoiceUrl(baseUrl, "speech"), {
+    const response = isQwenTts(config) ? await requestQwenSpeech(text, config, false, signal) : await fetchWithTimeout(buildCompatibleVoiceUrl(baseUrl, "speech"), {
         method: "POST", signal,
         headers: {
             ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
             "Content-Type": "application/json",
         },
-        body: JSON.stringify(isQwenTts(config) ? qwenSpeechBody(text, config, false) : {
+        body: JSON.stringify({
             model: config.model?.trim() || "tts-1",
             input: text,
             voice: config.defaultVoice?.trim() || "alloy",

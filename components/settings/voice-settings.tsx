@@ -257,6 +257,7 @@ export function VoiceSettings({ embedded = false, accountId }: { embedded?: bool
         previewAbortRef.current?.abort();
         previewPlaybackRef.current?.(); previewPlaybackRef.current = null;
         if (stopping) { setPlayingVoiceId(null); return; }
+        setFetchError(previous => ({ ...previous, [config.id]: "" }));
         const controller = new AbortController();
         previewAbortRef.current = controller;
         setPlayingVoiceId(config.id);
