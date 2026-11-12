@@ -39,7 +39,7 @@ export function CompanionAvatarSettings({ characterId, name }: { characterId: st
             style={{ display: "block", padding: "4px 0", border: 0, background: "transparent", color: "#c084fc", fontSize: 11, textAlign: "left", cursor: "pointer", textDecoration: "underline" }}>
             设置悬浮头像
         </button>
-        {open && createPortal(<div style={{ position: "fixed", inset: 0, zIndex: 2147483000 }}><ContentDialog title={`${name}的悬浮头像`} confirmLabel="完成" cancelLabel="" onConfirm={close} onCancel={close}>
+        {open && createPortal(<div data-adaptive-surface="decoration" style={{ position: "fixed", inset: 0, zIndex: 2147483000 }}><ContentDialog title={`${name}的悬浮头像`} confirmLabel="完成" cancelLabel="" onConfirm={close} onCancel={close}>
             <p style={{ marginTop: 0, lineHeight: 1.7 }}>只为{name}设置，伴宠、一起刷抖音和小红书共用。没有设置头像时显示名字。</p>
             <div style={{ width: 88, height: 88, margin: "16px auto", borderRadius: "50%", overflow: "hidden", display: "grid", placeItems: "center", background: "var(--c-input, #F1EDE7)", color: "var(--c-text-title, #563931)", textAlign: "center", fontSize: 16, overflowWrap: "anywhere" }}>
                 {avatar ? <img src={avatar} alt={`${name}的悬浮头像`} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ padding: 8 }}>{name}</span>}
