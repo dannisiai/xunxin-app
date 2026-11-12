@@ -11,6 +11,7 @@ parser.add_argument('--r2-endpoint', default=os.environ.get('XUNXIN_R2_ENDPOINT'
 parser.add_argument('--r2-bucket', default=os.environ.get('XUNXIN_R2_BUCKET'))
 parser.add_argument('--r2-base-url', default=os.environ.get('XUNXIN_R2_BASE_URL'))
 parser.add_argument('--r2-profile', default=os.environ.get('XUNXIN_R2_PROFILE'))
+parser.add_argument('--prepare-only', action='store_true', help='Sign and verify locally without uploading or changing any update feed')
 args=parser.parse_args()
 meta=json.loads((args.artifacts/'release-metadata.json').read_text(encoding='utf-8'))
 repo=meta['GITHUB_REPOSITORY'];version=meta['SHELL_VERSION_NAME'];tag=meta['RELEASE_TAG']
@@ -18,7 +19,7 @@ if repo!='dannisiai/xunxin-app' or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',ve
 r2 = (args.r2_endpoint, args.r2_bucket, args.r2_base_url)
 if any(r2) and not all(r2): raise SystemExit('R2 publishing requires endpoint, bucket and public base URL')
 mirror_url = meta.get('SHELL_UPDATE_MIRROR_URL', '').strip()
-if mirror_url and (not all(r2) or args.r2_base_url.rstrip('/') + '/android/version.json' != mirror_url):
+if mirror_url and not args.prepare_only and (not all(r2) or args.r2_base_url.rstrip('/') + '/android/version.json' != mirror_url):
  raise SystemExit('R2 publisher must match the update source embedded in the APK')
 private=json.loads((args.signing_dir/'signing-recovery.private.json').read_text(encoding='utf-8-sig'))
 public=json.loads((args.signing_dir/'signing-public.json').read_text(encoding='utf-8-sig'))
@@ -38,6 +39,9 @@ subprocess.run(['python',str(args.source/'scripts/create-android-update-feed.py'
 subprocess.run(['python',str(args.source/'scripts/check-app-popup-apk.py'),str(signed),'--report',str(args.artifacts/'popup-audit-signed.json')],check=True)
 manifest=json.loads(feed.read_text(encoding='utf-8'))
 if manifest['versionCode']!=int(meta['SHELL_VERSION_CODE']) or manifest['versionName']!=version:raise SystemExit('Signed APK version mismatch')
+if args.prepare_only:
+ print(json.dumps({'versionName':version,'versionCode':manifest['versionCode'],'apk':str(signed),'sha256':manifest['sha256']}))
+ raise SystemExit(0)
 subprocess.run(['gh','release','create',tag,str(signed),str(feed),str(args.artifacts/'popup-audit-signed.json'),'--repo',repo,'--target',meta['GITHUB_SHA'],'--title',f'寻信 {version}','--notes-file',str(download_notes),'--latest'],check=True)
 if all(r2):
  r2_feed=args.artifacts/'r2'/'version.json'
