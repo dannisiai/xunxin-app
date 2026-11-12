@@ -1,0 +1,216 @@
+/* Tablet presentation. All queries use the current content container, including split windows. */
+.adaptive-workspace { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.adaptive-workspace-nav { display: none; }
+.adaptive-workspace-content { position: relative; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow: hidden; container: app-pane / inline-size; }
+.adaptive-workspace-content > .page-shell { height: 100%; min-height: 0; }
+.music-library { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.reading-workspace { position: absolute; inset: 0; }
+.calendar-master-pane,.calendar-detail-pane { position: relative; height: 100%; min-width: 0; min-height: 0; overflow: hidden; flex: 1; }
+.calendar-app:not([data-wide="true"])[data-view="month"] > .calendar-detail-pane,
+.calendar-app:not([data-wide="true"])[data-view="detail"] > .calendar-master-pane { display: none; }
+.calendar-app[data-wide="true"] { display: grid; grid-template-columns: minmax(340px, 36%) minmax(0, 1fr); }
+.calendar-app[data-wide="true"] > .calendar-master-pane { border-inline-end: 1px solid var(--c-calendar-glass-edge); }
+.mp-body .mp-artwork { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; }
+.mp-body[data-view="cover"] > .mp-lyrics-wrap,
+.mp-body[data-view="lyrics"] > .mp-artwork { display: none; }
+.phone-swipe-layer > .icon-grid { flex-basis: calc(100% / var(--desktop-pages-per-view, 1)); width: calc(100% / var(--desktop-pages-per-view, 1)); }
+.phone-swipe-layer[data-pages-per-view="2"] > .icon-grid { border-inline-end: 1px solid color-mix(in srgb, var(--c-home-label) 12%, transparent); }
+html[data-adaptive-window="true"] .phone-shell { container: shell-screen / inline-size; --desktop-user-text-scale: var(--app-text-scale, 1); }
+.adaptive-character-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.adaptive-destination-icon { display: grid; place-items: center; width: 32px; min-width: 32px; }
+.adaptive-destination-list { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.adaptive-destination { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 10px 12px; border: 0; border-radius: 14px; background: transparent; color: var(--c-text-title); text-align: start; cursor: pointer; }
+.adaptive-destination > span:last-child { min-width: 0; }
+.adaptive-destination strong { display: block; font-size: calc(14px * var(--app-text-scale, 1)); font-weight: 600; overflow-wrap: anywhere; }
+.adaptive-destination small { display: block; margin-top: 4px; font-size: calc(12px * var(--app-text-scale, 1)); color: var(--c-text); overflow-wrap: anywhere; }
+.adaptive-destination[aria-current="page"] { background: var(--c-card); box-shadow: inset 0 0 0 1px var(--c-card-border); }
+.adaptive-workspace-home { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 8px; border: 0; background: transparent; color: var(--c-text-title); cursor: pointer; }
+.adaptive-workspace-nav h2 { margin: 12px 12px 20px; font-size: calc(24px * var(--app-text-scale, 1)); color: var(--c-text-title); }
+html[data-adaptive-window="true"] :is(button,a,input,textarea,select,[tabindex]):focus-visible { outline: 3px solid var(--c-icon-active, #5375b9); outline-offset: 3px; }
+/* Keep these small controls reachable even in a narrow tablet split or fold segment.
+   Increase the button hit box; the existing SVG/icon dimensions are preserved. */
+html[data-adaptive-window="true"] :is(.reading-chat-float-close,.reading-chat-send-btn,.calendar-mini-btn,.char-polaroid-menu-btn) {
+  min-width: 48px;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+@container app-pane (min-width: 840px) {
+  .adaptive-workspace > .adaptive-workspace-nav { display: block; flex: 0 0 clamp(220px, 25%, 280px); padding: 12px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; border-inline-end: 1px solid var(--c-card-border); background: var(--c-page-body-bg); }
+  .page-body > .adaptive-form-content { width: min(100%, 860px); margin-inline: auto; padding: 24px; }
+  .page-body > :is(.page-menu,.settings-main-menu,.appearance-main-menu) { width: min(100%, 1100px); margin-inline: auto; padding: 24px; }
+  .page-menu .card-grid { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
+  .page-menu .card-card { min-height: 92px; }
+  .page-menu .card-label { font-size: calc(16px * var(--app-text-scale, 1)); }
+  .page-menu :is(.card-desc,.card-featured-desc) { font-size: calc(13px * var(--app-text-scale, 1)); line-height: 1.6; }
+  .page-body > :is(.ui-form,.settings-section,.data-management) { width: min(100%, 860px); margin-inline: auto; }
+  :is(.ui-btn,.page-back-btn,.modal-header-btn,.reading-shelf-back,.reading-shelf-action-btn,.chat-tab,.music-tabbar-item,.music-header-action) { min-width: 48px; min-height: 48px; }
+  .music-app { display: grid; grid-template-columns: 96px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .music-app > .music-header { grid-area: 1 / 2; margin-top: var(--page-header-safe-top, 0px); }
+  .music-app > .music-library { grid-area: 2 / 2; }
+  .music-library > :is(.music-list,.music-discovery,.music-search-tab) { padding-bottom: 24px; }
+  .music-app > .music-bottom-dock { display: contents; }
+  .music-bottom-dock > .music-tabbar { grid-area: 1 / 1 / 4 / 2; position: static; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 8px; width: 96px; height: 100%; padding: 20px 8px; border-radius: 0; border-inline-end: 1px solid var(--c-music-accent-dim); box-sizing: border-box; }
+  .music-tabbar .music-tabbar-item { flex: 0 0 auto; min-height: 72px; border-radius: 18px; }
+  .music-tabbar .music-tabbar-item[data-active] { background: var(--c-music-accent-dim); }
+  .music-bottom-dock > .music-now-bar { grid-area: 3 / 2; position: relative; inset: auto; width: min(100%, 1100px); margin-inline: auto; box-sizing: border-box; }
+  .music-app { --music-tablet-nowbar-space: 0px; }
+  .music-app[data-nowbar] { --music-tablet-nowbar-space: 72px; }
+  .music-library .music-fab-add { right: 28px; }
+  .music-library .music-fab-upload { bottom: calc(var(--music-tablet-nowbar-space) + 24px) !important; }
+  .music-library .music-fab-style { bottom: calc(var(--music-tablet-nowbar-space) + 84px) !important; }
+}
+/* The chat list and its navigation keep their identity when the room pane appears. */
+.chat-app[data-rail-navigation="true"] > .chat-split-master { flex-basis: clamp(360px, 37%, 460px); padding-inline-start: 76px; box-sizing: border-box; }
+.chat-app[data-rail-navigation="true"] .chat-split-master .chat-main-content { padding-bottom: 0; }
+.chat-app[data-rail-navigation="true"] .chat-tab-bar { inset: 0 auto 0 0; width: 76px; height: 100%; min-height: 0; padding: 12px 4px; flex-direction: column; justify-content: flex-start; gap: 8px; border-top: 0; border-inline-end: 1px solid var(--c-card-border); box-sizing: border-box; }
+.chat-app[data-rail-navigation="true"] .chat-tab { flex: 0 0 auto; min-height: 72px; border-radius: 16px; }
+.chat-app[data-rail-navigation="true"] .chat-tab-active { background: var(--c-card); }
+.chat-app[data-split="true"][data-tabbar-hidden] > .chat-split-master { padding-inline-start: 0; }
+@container shell-screen (min-width: 840px) {
+  .mp-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; padding: 24px 48px; overflow: hidden; }
+  .mp-body > .mp-artwork { display: flex !important; grid-area: 1 / 1; }
+  .mp-body > .mp-lyrics-wrap { display: flex !important; grid-area: 1 / 2; height: 100%; min-height: 0; min-width: 0; }
+  .mp-body :is(.mp-cover,.music-player-vinyl) { width: min(32cqw, 380px, 52dvh); height: auto; aspect-ratio: 1; }
+  .mp-body .mp-cover-area { width: 100%; }
+  .mp-body .mp-lyrics { mask-image: linear-gradient(transparent, black 12%, black 88%, transparent); }
+  .music-player :is(.mp-progress-area,.mp-controls,.mp-social) { width: min(680px, calc(100% - 48px)); margin-inline: auto; box-sizing: border-box; }
+}
+@container app-pane (min-width: 600px) {
+  .page-body > :is(.page-menu,.adaptive-form-content) { box-sizing: border-box; }
+  .page-body :is(.ui-input,.ui-textarea) { max-inline-size: 100%; }
+  .modal-overlay-bottom { align-items: flex-end; padding-bottom: 24px; }
+  .modal-sheet { width: min(720px, calc(100% - 48px)); margin-inline: auto; border-radius: 24px; }
+  .modal-expand { width: min(900px, calc(100% - 48px)); }
+  .diary-entry-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); align-items: start; gap: 24px; }
+  .diary-book-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  :is(.ui-btn,.page-back-btn,.modal-header-btn,.reading-shelf-back,.reading-shelf-action-btn,.music-header-action,.calendar-icon-btn,.diary-icon-btn) { min-width: 48px; min-height: 48px; }
+  :is(.music-song-action-btn,.music-now-bar-btn,.music-player-ctrl-btn,.reading-footer-icon-btn,.reading-nav-close,.ctx-menu-btn), .chat-input-actions > button { min-width: 48px; min-height: 48px; }
+}
+@media (hover: hover) {
+  :is(.adaptive-destination,.adaptive-workspace-home,.chat-tab,.music-tabbar-item):hover { background-color: color-mix(in srgb, var(--c-icon-active) 10%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .adaptive-workspace * { scroll-behavior: auto !important; }
+}
+
+/* Universal tablet navigation: a compact rail in medium windows, a sidebar in
+   expanded windows. User resizing/collapsing changes CSS, never the editor tree. */
+.adaptive-workspace { container: workspace / inline-size; }
+.adaptive-workspace-nav { position: relative; }
+.adaptive-workspace-toggle { display: flex; align-items: center; gap: 10px; min-height: 48px; width: 100%; padding: 10px 12px; border: 0; border-radius: 12px; color: var(--c-text-title); background: transparent; cursor: pointer; }
+.adaptive-workspace-search { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin: 4px 0 12px; border-radius: 12px; background: var(--c-card); color: var(--c-text); }
+.adaptive-workspace-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--c-text-title); font: inherit; font-size: 16px; }
+.adaptive-workspace-no-results { color: var(--c-text); padding: 12px; font-size: 13px; }
+.adaptive-destination-list { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; flex: 1; padding: 2px; }
+.adaptive-destination-monogram { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: color-mix(in srgb, var(--c-text-title) 7%, transparent); font-size: 15px; }
+.pane-resize-handle { position: relative; flex: 0 0 12px; width: 12px; height: 100%; min-height: 0; display: flex; align-items: center; justify-content: center; touch-action: none; user-select: none; cursor: col-resize; background: var(--c-page-body-bg); }
+.pane-resize-handle > span { width: 3px; height: 32px; border-radius: 3px; background: color-mix(in srgb, var(--c-text-title) 18%, transparent); transition: background-color .15s; }
+.pane-resize-handle::before { content: ""; position: absolute; inset: 0 -16px; z-index: 1; }
+.pane-resize-handle:is(:hover,:focus-visible) > span { background: var(--c-icon-active, #5375b9); }
+.pane-resize-handle:focus-visible { outline: 2px solid var(--c-icon-active, #5375b9); outline-offset: -2px; }
+.adaptive-workspace-divider { display: none; }
+
+@container workspace (min-width: 600px) {
+  .adaptive-workspace > .adaptive-workspace-nav { display: flex; flex-direction: column; flex: 0 0 72px; width: 72px; padding: max(10px, var(--page-header-safe-top, 0px)) 8px 12px; box-sizing: border-box; border-inline-end: 1px solid var(--c-card-border); background: var(--c-page-body-bg); overflow: hidden; }
+  .adaptive-workspace-home { justify-content: center; flex-shrink: 0; }
+  .adaptive-workspace-nav h2,.adaptive-workspace-home > span,.adaptive-workspace-toggle > span,.adaptive-workspace-search,.adaptive-workspace-nav .adaptive-destination > span:last-child { display: none; }
+  .adaptive-workspace-toggle { justify-content: center; flex-shrink: 0; margin-block: 4px 12px; }
+  .adaptive-workspace-nav .adaptive-destination { justify-content: center; padding: 10px 0; min-height: 52px; flex-shrink: 0; }
+  .adaptive-workspace[data-navigation="expanded"] > .adaptive-workspace-nav { flex-basis: var(--workspace-navigation-width); width: var(--workspace-navigation-width); padding-inline: 12px; }
+  .adaptive-workspace[data-navigation="expanded"] > .adaptive-workspace-divider { display: flex; }
+  .adaptive-workspace[data-navigation="expanded"] .adaptive-workspace-nav h2 { display: block; margin: 10px 10px 16px; }
+  .adaptive-workspace[data-navigation="expanded"] :is(.adaptive-workspace-home,.adaptive-workspace-toggle,.adaptive-destination) { justify-content: flex-start; padding-inline: 10px; }
+  .adaptive-workspace[data-navigation="expanded"] :is(.adaptive-workspace-home > span,.adaptive-workspace-toggle > span,.adaptive-destination > span:last-child) { display: block; }
+  .adaptive-workspace[data-navigation="expanded"] .adaptive-workspace-search { display: flex; }
+}
+@container workspace (min-width: 840px) {
+  .adaptive-workspace[data-navigation="auto"] > .adaptive-workspace-nav { flex-basis: var(--workspace-navigation-width); width: var(--workspace-navigation-width); padding-inline: 12px; }
+  .adaptive-workspace[data-navigation="auto"] > .adaptive-workspace-divider { display: flex; }
+  .adaptive-workspace[data-navigation="auto"] .adaptive-workspace-nav h2 { display: block; margin: 10px 10px 16px; }
+  .adaptive-workspace[data-navigation="auto"] :is(.adaptive-workspace-home,.adaptive-workspace-toggle,.adaptive-destination) { justify-content: flex-start; padding-inline: 10px; }
+  .adaptive-workspace[data-navigation="auto"] :is(.adaptive-workspace-home > span,.adaptive-workspace-toggle > span,.adaptive-destination > span:last-child) { display: block; }
+  .adaptive-workspace[data-navigation="auto"] .adaptive-workspace-search { display: flex; }
+}
+/* The sidebar's own content container can be narrower than the overall app. */
+@container app-pane (min-width: 600px) {
+  .page-shell { --page-header-content-height: 56px; }
+  .page-header-content { grid-template-columns: minmax(48px, 1fr) minmax(0, 2fr) minmax(48px, 1fr); gap: 12px; min-height: 56px; padding-inline: 24px; }
+  .page-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page-body > :is(.ui-form,.settings-section,.data-management,.adaptive-form-content) { width: min(100%, 880px); margin-inline: auto; box-sizing: border-box; }
+  .page-body > :is(.page-menu,.settings-main-menu,.appearance-main-menu) { width: min(100%, 1120px); margin-inline: auto; box-sizing: border-box; }
+  .page-menu .card-grid { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px; }
+  .menu-item { min-width: 0; }
+  .menu-label-group { min-width: 0; }
+  .menu-desc { overflow-wrap: anywhere; }
+  .diary-home { width: min(100%, 1000px); margin-inline: auto; }
+}
+
+/* Conversation list + detail in portrait tablets; the extra rail only appears
+   when the remaining reading and composition area is sufficiently wide. */
+.chat-app[data-split="true"]:not([data-dual-screen="true"]) > .chat-split-master { flex: 0 0 var(--chat-list-width, 320px); width: var(--chat-list-width, 320px); }
+.chat-app[data-rail-navigation="true"]:not([data-dual-screen="true"]) > .chat-split-master { padding-inline-start: 76px; }
+.chat-app[data-dual-screen="true"] > .chat-pane-divider { display: none; }
+.chat-split-detail { container: conversation / inline-size; }
+@container conversation (min-width: 700px) {
+  .chat-scroll-anchored { padding-inline: max(22px, calc((100cqw - 920px) / 2)) !important; }
+  .chat-input-bar { padding-inline: max(12px, calc((100cqw - 920px) / 2)); box-sizing: border-box; }
+}
+.calendar-app[data-wide="true"] { grid-template-columns: clamp(320px, 36%, 420px) minmax(0, 1fr); }
+
+/* Bookshelf and reader stay mounted when changing window sizes or returning to
+   the shelf. A large 16:10 window can show shelf, chapters and the reading pane. */
+.reading-app-workspace { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.reading-library-pane { position: relative; flex: 1; min-width: 0; min-height: 0; height: 100%; container: library / inline-size; }
+.reading-reader-pane { position: absolute; inset: 0; min-width: 0; min-height: 0; visibility: hidden; pointer-events: none; }
+.reading-app-workspace[data-book-active="true"] > .reading-library-pane { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.reading-app-workspace[data-book-active="true"] > .reading-reader-pane { visibility: visible; pointer-events: auto; }
+.reading-app-workspace[data-wide="true"] { display: grid; grid-template-columns: clamp(260px, 22%, 320px) minmax(0, 1fr); }
+.reading-app-workspace[data-wide="true"] > .reading-library-pane { position: relative; inset: auto; visibility: visible; pointer-events: auto; border-inline-end: 1px solid var(--c-card-border); }
+.reading-app-workspace[data-wide="true"] > .reading-reader-pane { position: relative; inset: auto; visibility: visible; pointer-events: auto; }
+.reading-list-item[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--c-icon-active, #5375b9); }
+.reading-list-item:focus-visible { outline: 2px solid var(--c-icon-active, #5375b9); outline-offset: 3px; }
+@container library (max-width: 360px) {
+  .reading-book-list { display: flex; flex-direction: column; gap: 10px; padding-inline: 12px; }
+  .reading-list-item { gap: 10px; padding: 10px; }
+  .reading-list-cover { width: 54px; min-width: 54px; height: 72px; }
+  .reading-shelf-appbar { padding-inline: 10px; gap: 6px; }
+  .reading-shelf-title { font-size: 20px; }
+  .reading-shelf-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
+.tablet-detail-placeholder { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 12px; height: 100%; min-height: 200px; padding: 32px; box-sizing: border-box; color: var(--c-text); background: var(--c-page-body-bg); }
+.tablet-detail-placeholder h2 { margin: 0; font-size: 20px; font-weight: 600; color: var(--c-text-title); }
+.tablet-detail-placeholder p { margin: 0; max-width: 360px; line-height: 1.7; font-size: 14px; }
+
+/* Large tablets get an inline diary reader; narrower windows keep the existing
+   dialog and back navigation. Dialogs are never simultaneously shown twice. */
+.diary-entry-master { position: relative; display: flex; flex-direction: column; flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.diary-entry-app[data-detail-layout="split"] { display: grid; grid-template-columns: minmax(320px, 42%) minmax(0, 1fr); }
+.diary-entry-reading-pane { position: relative; height: 100%; min-width: 0; min-height: 0; overflow: hidden; border-inline-start: 1px solid var(--c-card-border); padding: max(24px, var(--page-header-safe-top, 0px)) 24px 24px; box-sizing: border-box; }
+.diary-entry-reading-pane .diary-entry-inline-detail { height: 100%; display: flex; min-height: 0; }
+.diary-entry-inline-detail > .diary-entry-detail-paper { width: 100%; height: 100%; max-height: none; min-width: 0; margin: 0; }
+.diary-entry-app[data-detail-layout="split"] .diary-entry-list { display: flex; flex-direction: column; gap: 14px; }
+.diary-entry-card[aria-current="true"] { outline: 2px solid var(--c-icon-active, #5375b9); outline-offset: 2px; }
+.diary-entry-inline-detail .diary-entry-detail-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+@media (hover: hover) {
+  .adaptive-workspace-toggle:hover { background: color-mix(in srgb, var(--c-icon-active) 9%, transparent); }
+}
+
+/* Xiaoxin Pad Pro's broad 16:10 workspace is also shared by many Android
+   tablets. Bound home icon sizes by usable height while preserving saved cells. */
+html[data-device-type="tablet"][data-orientation="landscape"]:not([data-window-size="compact"]) .icon-grid {
+  --tablet-icon-size: clamp(48px, calc((var(--phone-screen-height, 800px) - 200px) / 10), 84px);
+  --adaptive-grid-row-min: calc(var(--tablet-icon-size) + 28px);
+  --home-grid-bottom-trim: 12px;
+}
+html[data-device-type="tablet"][data-orientation="landscape"]:not([data-window-size="compact"]) .icon-grid .icon-label { font-size: calc(14px * var(--app-text-scale, 1)); }
+@container app-pane (min-width: 600px) {
+  .cp-shopping-product-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
+  .game-library-groups { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+  .cp-shopping-body { width: min(100%, 1280px); align-self: center; min-width: 0; box-sizing: border-box; }
+  .reading-scroll-content { width: min(100%, 860px); margin-inline: auto; box-sizing: border-box; }
+}
+@container app-pane (min-width: 1200px) {
+  .cp-shopping-product-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 24px; }
+}

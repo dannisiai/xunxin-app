@@ -1,0 +1,168 @@
+name: Publish Android
+run-name: Android release from ${{ github.sha }}
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '*.md']
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: Display version (blank increments the previous patch version)
+        type: string
+        default: ''
+      release_notes:
+        description: Release notes
+        type: string
+        default: ''
+      force_update:
+        description: Require installation before continuing
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: android-stable-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      NEXT_PUBLIC_SELF_HOSTED_MODE: 'false'
+      XUNXIN_ANDROID_BUILD: '1'
+      XUNXIN_ANDROID_LOCAL: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NODE_OPTIONS: --max-old-space-size=6144
+      SHELL_UPDATE_URL: https://github.com/${{ github.repository }}/releases/download/android-ota-stable/version.json
+      SIGNING_CERT_SHA256: ${{ vars.SHELL_SIGNING_CERT_SHA256 }}
+      REQUESTED_VERSION: ${{ inputs.version_name }}
+      REQUESTED_NOTES: ${{ inputs.release_notes }}
+      FORCE_UPDATE: ${{ inputs.force_update || false }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Configure release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          repo = os.environ['GITHUB_REPOSITORY']
+          temp = Path(os.environ['RUNNER_TEMP'])
+          prior = temp / 'prior'
+          prior.mkdir()
+          lookup = subprocess.run(['gh', 'api', f'repos/{repo}/releases/tags/android-ota-stable'], capture_output=True, text=True)
+          previous = None
+          if lookup.returncode == 0:
+              subprocess.run(['gh', 'release', 'download', 'android-ota-stable', '--repo', repo, '--pattern', 'version.json', '--dir', str(prior)], check=True)
+              previous = json.loads((prior / 'version.json').read_text())
+          elif 'HTTP 404' not in lookup.stderr:
+              raise SystemExit(lookup.stderr)
+          code = max(23, int(previous['versionCode']) + 1 if previous else 23)
+          version = os.environ.get('REQUESTED_VERSION') or json.loads(Path('package.json').read_text())['version']
+          if previous and not os.environ.get('REQUESTED_VERSION'):
+              old = tuple(map(int, previous['versionName'].split('.')))
+              wanted = tuple(map(int, version.split('.')))
+              if wanted <= old:
+                  version = f'{old[0]}.{old[1]}.{old[2] + 1}'
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('Invalid display version')
+          certificate = os.environ['SIGNING_CERT_SHA256']
+          if not re.fullmatch(r'[0-9a-fA-F]{64}', certificate):
+              raise SystemExit('Production signing certificate is not configured')
+          package = temp / 'package'
+          package.mkdir()
+          notes = os.environ.get('REQUESTED_NOTES') or '移除三处编码的使用声明弹窗；伴宠与一起看共用每个 AI 的自定义头像；无头像显示名字；保留原对话气泡并支持拖动；语音参考音频支持 WAV、MP3、FLAC、M4A。'
+          (package / 'notes.md').write_text(notes, encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'SHELL_VERSION_CODE={code}\nSHELL_VERSION_NAME={version}\nRELEASE_TAG=android-v{version}-{code}\n')
+          print(f'Releasing {version} (Android versionCode {code})')
+          PY
+      - name: Check application source for removed popup
+        run: node scripts/check-app-popup-bundle.cjs components lib app public android-shell/app/src/main
+      - name: Build bundled application
+        run: |
+          npm ci
+          npm run build
+          python3 scripts/prepare-xunxin-android.py
+          python3 scripts/install-android-node.py --install-toolchain
+      - name: Build APK
+        env:
+          SHELL_KEYSTORE_BASE64: ${{ secrets.SHELL_KEYSTORE_BASE64 }}
+          SHELL_KEYSTORE_PASSWORD: ${{ secrets.SHELL_KEYSTORE_PASSWORD }}
+          SHELL_KEY_ALIAS: ${{ secrets.SHELL_KEY_ALIAS }}
+          SHELL_KEY_PASSWORD: ${{ secrets.SHELL_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -n "$SHELL_KEYSTORE_BASE64" ]; then
+            test -n "$SHELL_KEYSTORE_PASSWORD"
+            test -n "$SHELL_KEY_ALIAS"
+            test -n "$SHELL_KEY_PASSWORD"
+            umask 077
+            printf '%s' "$SHELL_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.keystore"
+            export SHELL_KEYSTORE_FILE="$RUNNER_TEMP/signing.keystore"
+            echo 'CLOUD_SIGNING_CONFIGURED=true' >> "$GITHUB_ENV"
+          fi
+          if ! gradle -p android-shell assembleRelease lintRelease; then
+            find android-shell/app/build -name lint-results-release.txt -type f -exec cat {} \;
+            exit 1
+          fi
+      - name: Audit actual APK and prepare release artifacts
+        run: |
+          set -eu
+          if [ "${CLOUD_SIGNING_CONFIGURED:-false}" = true ]; then
+            cp android-shell/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME.apk"
+            apk="$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME.apk"
+          else
+            cp android-shell/app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME-unsigned.apk"
+            apk="$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME-unsigned.apk"
+          fi
+          python3 scripts/check-app-popup-apk.py "$apk" --report "$RUNNER_TEMP/package/popup-audit.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          data = {name: os.environ[name] for name in ['SHELL_VERSION_CODE', 'SHELL_VERSION_NAME', 'RELEASE_TAG', 'GITHUB_SHA', 'GITHUB_REPOSITORY', 'SIGNING_CERT_SHA256']}
+          (Path(os.environ['RUNNER_TEMP']) / 'package' / 'release-metadata.json').write_text(json.dumps(data, indent=2), encoding='utf-8')
+          PY
+          if [ "${CLOUD_SIGNING_CONFIGURED:-false}" = true ]; then
+            force=()
+            if [ "$FORCE_UPDATE" = true ]; then force=(--force-update); fi
+            python3 scripts/create-android-update-feed.py --apk "$apk" --apk-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/xunxin-$SHELL_VERSION_NAME.apk" --notes-file "$RUNNER_TEMP/package/notes.md" --expected-certificate-sha256 "$SIGNING_CERT_SHA256" --output "$RUNNER_TEMP/package/version.json" "${force[@]}"
+          fi
+      - name: Preserve release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xunxin-android-release
+          path: ${{ runner.temp }}/package/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish release and automatic update channel
+        if: env.CLOUD_SIGNING_CONFIGURED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/package/xunxin-$SHELL_VERSION_NAME.apk" "$RUNNER_TEMP/package/version.json" "$RUNNER_TEMP/package/popup-audit.json" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "寻信 $SHELL_VERSION_NAME" --notes-file "$RUNNER_TEMP/package/notes.md" --latest
+          if gh release view android-ota-stable --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload android-ota-stable "$RUNNER_TEMP/package/version.json" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create android-ota-stable "$RUNNER_TEMP/package/version.json" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'Android 自动更新通道' --notes 'App 固定使用此地址检查更新。' --latest=false
+          fi
+      - name: Remove runner signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/signing.keystore"

@@ -1,0 +1,337 @@
+/* Local, unmodified OFL font. Loaded only when the call presentation uses it. */
+@font-face {
+  font-family: "ChillRoundF Call";
+  src: url("/fonts/call/ChillRoundF-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+/* Single-person voice calls only; video and group-call themes keep their styles. */
+.voicecall-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  overflow: hidden;
+  container-type: size;
+  container-name: voicecall;
+  color: #fff;
+  font-family: "ChillRoundF Call", "SF Pro Rounded", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: radial-gradient(ellipse at 12% 0%, #596267 0%, transparent 58%), linear-gradient(155deg, #303a40, #1c252d 55%, #12181f);
+  isolation: isolate;
+}
+
+.voicecall-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.18));
+}
+.voicecall-backdrop[data-has-image="true"] {
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.voicecall-body {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 620px);
+  height: 100%;
+  min-width: 0;
+  margin-inline: auto;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 0 max(18px, env(safe-area-inset-bottom, 0px));
+}
+.voicecall-header {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding-inline: 22px;
+}
+.voicecall-minimize {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+}
+.voicecall-identity {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: clamp(16px, 3cqh, 32px) 24px 14px;
+  text-align: center;
+}
+.voicecall-portrait {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+}
+.voicecall-screen .voicecall-avatar {
+  width: 144px;
+  height: 144px;
+  width: clamp(112px, 19cqh, 152px);
+  height: clamp(112px, 19cqh, 152px);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.13);
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.05), 0 14px 40px rgba(0, 0, 0, 0.18);
+}
+.voicecall-screen .voicecall-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.voicecall-initial {
+  font-size: calc(62px * var(--app-text-scale, 1));
+  font-weight: 400;
+  line-height: 1;
+}
+.voicecall-connect-ring {
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: voicecall-ring 2s ease-out infinite;
+}
+.voicecall-connect-ring + .voicecall-connect-ring { animation-delay: 1s; }
+.voicecall-name {
+  max-width: 100%;
+  margin: 0;
+  font-size: calc(29px * var(--app-text-scale, 1));
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.voicecall-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  font-size: calc(14px * var(--app-text-scale, 1));
+  line-height: 1.5;
+  opacity: 0.72;
+}
+.voicecall-duration { font-variant-numeric: tabular-nums; }
+.voicecall-notices {
+  flex: 0 1 auto;
+  max-height: 76px;
+  min-height: 24px;
+  overflow-y: auto;
+  margin: 0 22px 6px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.24);
+  font-size: calc(11px * var(--app-text-scale, 1));
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.voicecall-notices p { margin: 0; opacity: 0.85; }
+.voicecall-notices p + p { margin-top: 6px; }
+
+.voicecall-transcript {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 22px 14px;
+  -webkit-overflow-scrolling: touch;
+}
+/* Auto margin keeps short conversations low without clipping long history. */
+.voicecall-transcript > :first-child { margin-top: auto; }
+.voicecall-screen .call-subtitle {
+  flex-shrink: 0;
+  max-width: 86%;
+  padding: 10px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 19px;
+  background: rgba(0, 0, 0, 0.46);
+  color: #fff;
+  font-size: calc(15px * var(--app-text-scale, 1));
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: 0.015em;
+  text-shadow: none;
+  overflow-wrap: anywhere;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.08);
+}
+.voicecall-screen .call-subtitle[data-role="user"] { align-self: flex-end; }
+.voicecall-screen .call-subtitle[data-role="assistant"] { align-self: flex-start; }
+.voicecall-screen .call-subtitle[data-interim] { opacity: 0.65; }
+.voicecall-composer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px 12px;
+}
+.voicecall-composer .call-text-input-shell {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  min-height: 46px;
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: none;
+}
+.voicecall-composer .call-text-input { font-size: max(16px, calc(15px * var(--app-text-scale, 1))); }
+.voicecall-composer .call-regenerate-btn { width: 38px; height: 38px; box-shadow: none; }
+.voicecall-composer .call-text-send-btn { width: 32px; height: 32px; }
+.voicecall-recording-hint {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 22px 8px;
+  text-align: center;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  opacity: 0.72;
+}
+
+.voicecall-actions { flex: 0 0 auto; padding: 8px 24px 0; }
+.voicecall-tools {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: clamp(20px, 8cqw, 46px);
+}
+.voicecall-action, .voicecall-screen .call-volume[data-inline="true"] {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  min-width: 68px;
+}
+.voicecall-action-button, .voicecall-screen .call-volume[data-inline="true"] .call-volume-btn {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: background 160ms ease, transform 160ms ease;
+  touch-action: manipulation;
+}
+.voicecall-action-button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.32); }
+.voicecall-action-button[data-recording="true"] { background: #24874b; }
+.voicecall-action-button[data-tone="end"] { background: #ff453a; border-color: transparent; }
+.voicecall-action-button[data-tone="accept"] { background: #30b85c; border-color: transparent; }
+.voicecall-end-icon { transform: rotate(135deg); }
+.voicecall-text-icon { font-size: 25px; line-height: 1; font-weight: 600; }
+.voicecall-action-label { font-size: calc(12px * var(--app-text-scale, 1)); line-height: 1.35; }
+.voicecall-end-row { display: flex; justify-content: center; margin-top: 20px; }
+.voicecall-end-row .voicecall-action-button, .voicecall-connect-actions .voicecall-action-button { width: 70px; height: 70px; }
+.voicecall-connect-actions { display: flex; justify-content: center; gap: 90px; padding-block: 24px 8px; }
+.voicecall-ended { margin: 12px 0; text-align: center; font-size: 14px; opacity: 0.7; }
+.voicecall-screen .call-volume[data-inline="true"] {
+  position: relative;
+  top: auto;
+  left: auto;
+  z-index: 2;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.voicecall-screen .call-volume[data-inline="true"] .call-volume-btn svg { width: 27px; height: 27px; }
+.voicecall-screen .call-volume[data-inline="true"] .call-volume-slider {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  right: -6px;
+  width: 124px;
+  height: 30px;
+  margin: 0;
+  opacity: 1;
+  border: 8px solid rgba(20, 24, 28, 0.94);
+  border-radius: 999px;
+  background: #252b30;
+}
+.voicecall-screen button:focus-visible, .voicecall-screen input:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+.voicecall-screen button:disabled { opacity: 0.35; cursor: default; }
+.voicecall-screen button:not(:disabled):active { transform: scale(0.94); }
+
+@container voicecall (max-height: 650px) {
+  .voicecall-identity { padding-top: 10px; gap: 6px; }
+  .voicecall-portrait { margin-bottom: 8px; }
+  .voicecall-screen .voicecall-avatar { width: 100px; height: 100px; }
+  .voicecall-initial { font-size: 48px; }
+  .voicecall-name { font-size: calc(25px * var(--app-text-scale, 1)); }
+  .voicecall-end-row { margin-top: 12px; }
+  .voicecall-action-button, .voicecall-screen .call-volume[data-inline="true"] .call-volume-btn,
+  .voicecall-end-row .voicecall-action-button { width: 56px; height: 56px; }
+  .voicecall-action, .voicecall-screen .call-volume[data-inline="true"] { gap: 6px; }
+}
+@container voicecall (max-height: 500px) {
+  .voicecall-header { min-height: 30px; }
+  .voicecall-identity { flex-direction: row; flex-wrap: wrap; justify-content: center; padding-block: 6px; }
+  .voicecall-portrait { margin: 0 8px 0 0; }
+  .voicecall-screen .voicecall-avatar { width: 64px; height: 64px; }
+  .voicecall-initial { font-size: 32px; }
+  .voicecall-status { width: 100%; }
+  .voicecall-actions { display: flex; justify-content: center; align-items: flex-start; gap: 16px; }
+  .voicecall-tools { gap: 8px; }
+  .voicecall-end-row { margin-top: 0; }
+  .voicecall-notices { max-height: 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voicecall-screen *, .voicecall-screen *::before, .voicecall-screen *::after { animation: none !important; transition: none !important; }
+}
+
+.voicecall-preview-page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  background: #e9ecee;
+}
+.voicecall-preview-caption { margin: 0; font-size: 13px; color: #555e66; text-align: center; }
+.voicecall-preview-scenes { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.voicecall-preview-scenes button {
+  padding: 7px 12px;
+  border: 1px solid #cbd1d5;
+  border-radius: 999px;
+  background: #f8f9fa;
+  color: #3c464e;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.voicecall-preview-scenes button[aria-pressed="true"] { border-color: #344049; background: #344049; color: #fff; }
+.voicecall-preview-frame {
+  position: relative;
+  width: min(390px, 100%);
+  height: min(820px, calc(100dvh - 118px));
+  min-height: 400px;
+  overflow: hidden;
+  border: 6px solid #1d2124;
+  border-radius: 42px;
+  box-shadow: 0 18px 60px rgba(25, 36, 45, 0.2);
+}

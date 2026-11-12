@@ -1,0 +1,10 @@
+/* Chat stylesheet entrypoint. Keep import order: later feature rules extend the base. */
+@import "./chat/contacts.css";
+@import "./chat/messages.css";
+@import "./chat/composer.css";
+@import "./reading.css";
+@import "./chat/calls.css";
+@import "./chat/moments.css";
+@import "./chat/group-calls.css";
+@import "./chat/extensions.css";
+@import "./chat/voice-call.css";

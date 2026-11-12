@@ -1,0 +1,10 @@
+.display-refresh-card { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; padding: 18px; border-radius: var(--ui-radius-card, 20px); box-sizing: border-box; flex-shrink: 0; }
+.display-refresh-heading { display: flex; align-items: center; gap: 12px; color: var(--c-text-title); }
+.display-refresh-heading > div { min-width: 0; }
+.display-refresh-heading h3 { margin: 0; font-size: calc(16px * var(--app-text-scale, 1)); font-weight: 600; }
+.display-refresh-heading p,.display-refresh-hint { margin: 5px 0 0; color: var(--c-text-muted, #777); font-size: calc(12px * var(--app-text-scale, 1)); line-height: 1.6; overflow-wrap: anywhere; }
+.display-refresh-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 8px; }
+.display-refresh-options button { min-height: 48px; min-width: 0; padding: 8px; border: 1px solid var(--c-card-border); border-radius: 12px; background: var(--c-input); color: var(--c-text-title); font: inherit; font-size: calc(13px * var(--app-text-scale, 1)); cursor: pointer; }
+.display-refresh-options button[aria-pressed="true"] { border-color: var(--c-icon-active); background: var(--c-icon-active); color: var(--c-panel, #fff); }
+.display-refresh-options button:disabled { opacity: .38; cursor: not-allowed; }
+

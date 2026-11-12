@@ -1,0 +1,618 @@
+// lib/tts-service.ts — 语音合成服务
+
+import type { VoiceApiConfig, ContentAppId } from "./settings-types";
+import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { buildCompatibleVoiceUrl, resolveCompatibleVoiceBaseUrl } from "./voice-api";
+import { usesMiniCPMTts } from "./voice-mode";
+import { isQwenTts, qwenSpeechBody } from "./qwen-tts";
+import { fetchTtsResponse as fetchWithTimeout } from "./tts-request";
+import { playPcmResponse } from "./tts-pcm-player";
+
+export type VoiceApiConfigResolved = VoiceApiConfig;
+
+type SpeechPlayback = { promise: Promise<void>; abort: () => void };
+
+/** Qwen calls/preview stream PCM; cached voice messages can still use synthesizeSpeech. */
+export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
+    signal?: AbortSignal;
+    emotion?: string;
+    playBlob?: (blob: Blob) => SpeechPlayback;
+}): SpeechPlayback {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    let playback: SpeechPlayback | null = null;
+    let streamContext: AudioContext | null = null;
+    const abort = () => { controller.abort(); playback?.abort(); };
+    const external = options?.signal;
+    if (external?.aborted) abort(); else external?.addEventListener("abort", abort, { once: true });
+    const promise = (async () => {
+        signal.throwIfAborted();
+        if (!text.trim()) return;
+        const context = streamContext = isQwenTts(config) ? getAudioContext() : null;
+        // Check playback permission BEFORE sending a synthesis request. A media-element
+        // fallback must never resubmit a stream that has already generated audio.
+        if (context?.state === "suspended") {
+            await Promise.race([context.resume().catch(() => {}), new Promise(resolve => setTimeout(resolve, 800))]);
+            signal.throwIfAborted();
+        }
+        if (context?.state === "running") {
+            const response = await fetchWithTimeout(buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
+                method: "POST", signal,
+                headers: { "Content-Type": "application/json", ...(config.apiKey?.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) },
+                body: JSON.stringify(qwenSpeechBody(text, config, true)),
+            });
+            if (!response.ok) {
+                // Do not repeat a failed generation automatically (including a partial stream).
+                await response.body?.cancel();
+                throw new Error(`Qwen TTS 请求失败（HTTP ${response.status}）`);
+            }
+            const type = (response.headers.get("content-type") || "").toLowerCase();
+            if (/^audio\/(?:x-)?pcm\b/.test(type) || type.startsWith("application/octet-stream")) {
+                const gain = context.createGain(); gain.gain.value = _ttsVolume; gain.connect(context.destination);
+                _activeGain = gain;
+                try { await playPcmResponse(response, context, gain, signal); }
+                finally {
+                    gain.disconnect();
+                    if (_activeGain === gain) {
+                        _activeGain = null;
+                    }
+                }
+                return;
+            }
+            if (!type.startsWith("audio/")) {
+                await response.body?.cancel(); throw new Error("语音接口未返回 PCM 流或音频文件");
+            }
+            // Some compatible servers ignore stream=true and return a complete WAV/MP3.
+            const blob = await response.blob();
+            signal.throwIfAborted();
+            if (!blob.size) throw new Error("语音服务返回了空音频");
+            playback = (options?.playBlob || playAudioBlobViaMediaElement)(blob);
+        } else {
+            const blob = await synthesizeSpeech(text, config, { signal, emotion: options?.emotion });
+            signal.throwIfAborted();
+            if (!blob?.size) throw new Error("语音服务没有返回可播放的音频");
+            playback = (options?.playBlob || playAudioBlobViaMediaElement)(blob);
+        }
+        await playback.promise;
+        signal.throwIfAborted();
+    })().finally(() => {
+        external?.removeEventListener("abort", abort);
+        // Failed requests and servers returning a file must also release the preview's
+        // Web Audio session. Never suspend another active playback or an ongoing call.
+        if (streamContext && !_activeGain && !_callAudioSessionActive) void streamContext.suspend().catch(() => {});
+    });
+    return { promise, abort };
+}
+
+/**
+ * Resolve the TTS voice config for a character via the binding cascade.
+ * Returns null if no voice config is bound or found.
+ */
+export function resolveVoiceConfig(characterId: string, appId?: ContentAppId): VoiceApiConfig | null {
+    const bindings = loadBindingConfig();
+    const slot = resolveBinding(bindings, characterId, appId ?? "chat");
+    if (!slot.voiceConfigId) return null;
+
+    const configs = loadVoiceConfigs();
+    return configs.find(c => c.id === slot.voiceConfigId) || null;
+}
+
+/**
+ * Synthesize speech from text using the given voice config.
+ * Returns an audio Blob (mp3/wav) or null if synthesis failed.
+ *
+ * Supported providers:
+ * - Minimax: REST API → hex-encoded mp3
+ * - OpenAI / Custom: OpenAI-compatible REST API → binary audio blob
+ */
+export async function synthesizeSpeech(
+    text: string,
+    voiceConfig: VoiceApiConfig,
+    options?: { emotion?: string; signal?: AbortSignal },
+): Promise<Blob | null> {
+    if (!text.trim()) return null;
+
+    const provider = voiceConfig.provider;
+
+    if (usesMiniCPMTts(voiceConfig)) {
+        const { synthesizeMiniCPM } = await import("./minicpm-realtime");
+        return synthesizeMiniCPM(text, voiceConfig, options?.signal);
+    }
+
+    if (provider === "Minimax") {
+        return synthesizeMinimax(text, voiceConfig, options?.emotion, options?.signal);
+    }
+
+    if (provider === "OpenAI" || provider === "Custom") {
+        return synthesizeOpenAI(text, voiceConfig, options?.signal);
+    }
+
+    if (["ElevenLabs", "GoogleCloudTTS", "AzureSpeech"].includes(provider)) {
+        const response = await fetchWithTimeout("/api/voice/synthesize", {
+            method: "POST", signal: options?.signal, headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, config: {
+                provider, apiKey: voiceConfig.apiKey, baseUrl: voiceConfig.baseUrl, region: voiceConfig.region,
+                voiceAuthMode: voiceConfig.voiceAuthMode, voiceLocale: voiceConfig.voiceLocale,
+                quotaProjectId: voiceConfig.quotaProjectId,
+                defaultVoice: voiceConfig.defaultVoice, model: voiceConfig.model,
+            } }),
+        });
+        if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.error || "语音合成失败（HTTP " + response.status + "）");
+        }
+        const blob = await response.blob();
+        if (!blob.size) throw new Error("服务商返回了空音频");
+        return blob;
+    }
+
+    return null;
+}
+
+// ── Minimax TTS ─────────────────────────────────────
+
+// MiniMax voice_setting.emotion 支持的取值（speech-01-turbo/hd、speech-02-turbo/hd 等）。
+const MINIMAX_EMOTIONS = new Set([
+    "happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "neutral", "fluent",
+]);
+
+const MINIMAX_SPEED_MIN = 0.5;
+const MINIMAX_SPEED_MAX = 2.0;
+const MINIMAX_PITCH_MIN = -12;
+const MINIMAX_PITCH_MAX = 12;
+
+function normalizeMinimaxSpeed(speed: number | undefined): number {
+    if (typeof speed !== "number" || !Number.isFinite(speed)) return 1.0;
+    return Math.min(MINIMAX_SPEED_MAX, Math.max(MINIMAX_SPEED_MIN, speed));
+}
+
+function normalizeMinimaxPitch(pitch: number | undefined): number {
+    if (typeof pitch !== "number" || !Number.isFinite(pitch)) return 0;
+    return Math.min(MINIMAX_PITCH_MAX, Math.max(MINIMAX_PITCH_MIN, Math.round(pitch)));
+}
+
+async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?: string, signal?: AbortSignal): Promise<Blob | null> {
+    if (!config.apiKey) throw new Error("Minimax API Key 未配置");
+
+    const baseUrl = (config.baseUrl || "https://api.minimaxi.com/v1").replace(/\/$/, "");
+    const voiceSetting: Record<string, unknown> = {
+        voice_id: config.defaultVoice || "male-qn-qingse",
+        speed: normalizeMinimaxSpeed(config.speechSpeed),
+        vol: 1.0,
+        pitch: normalizeMinimaxPitch(config.speechPitch),
+    };
+    const normalizedEmotion = emotion?.trim().toLowerCase();
+    if (normalizedEmotion && MINIMAX_EMOTIONS.has(normalizedEmotion)) {
+        voiceSetting.emotion = normalizedEmotion;
+    }
+
+    const response = await fetchWithTimeout(`${baseUrl}/t2a_v2`, {
+        method: "POST", signal,
+        headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: config.model || "speech-01-turbo",
+            text,
+            stream: false,
+            ...(config.languageBoost ? { language_boost: config.languageBoost } : {}),
+            voice_setting: voiceSetting,
+            // 44100/256k 是 Minimax 支持的最高档;之前 32000/128k 会把 hd 模型
+            // 的输出压闷(用户反馈"声音糊"),各模型均支持该档位。
+            audio_setting: {
+                sample_rate: 44100,
+                bitrate: 256000,
+                format: "mp3",
+                channel: 1,
+            },
+        }),
+    });
+
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.base_resp?.status_msg || `Minimax API 请求失败 (${response.status})`);
+    }
+
+    const data = await response.json();
+    if (data.data?.audio) {
+        const hexString: string = data.data.audio;
+        const bytes = new Uint8Array(hexString.length / 2);
+        for (let i = 0; i < hexString.length; i += 2) {
+            bytes[i / 2] = parseInt(hexString.substring(i, i + 2), 16);
+        }
+        return new Blob([bytes], { type: "audio/mpeg" });
+    }
+
+    throw new Error(data.base_resp?.status_msg || "Minimax 未返回音频数据");
+}
+
+// ── OpenAI TTS ──────────────────────────────────────
+
+async function synthesizeOpenAI(text: string, config: VoiceApiConfig, signal?: AbortSignal): Promise<Blob | null> {
+    const custom = config.provider === "Custom";
+    const apiKey = config.apiKey?.trim() || "";
+    if (!custom && !apiKey) throw new Error("OpenAI API Key 未配置");
+    if (custom && !config.model?.trim()) throw new Error("请填写自定义语音的合成模型 ID");
+
+    const baseUrl = resolveCompatibleVoiceBaseUrl(config);
+
+    if (baseUrl.includes(".aliyuncs.com") || baseUrl.includes("dashscope")) {
+        const urlObj = new URL(baseUrl);
+        const dashscopeUrl = "https://" + urlObj.host + "/api/v1/services/aigc/multimodal-generation/generation";
+        let model = config.model?.trim() || "qwen3-tts-flash";
+        if (model.endsWith("-realtime")) {
+            model = model.replace(/-realtime$/, "");
+        }
+        const validVoices = new Set(["Cherry", "Serena", "Ethan", "Chelsie", "Momo", "Vivian", "Moon", "Maia"]);
+        let voice = config.defaultVoice?.trim() || "Cherry";
+        if (!validVoices.has(voice) && !voice.startsWith("qwen-")) {
+            voice = "Cherry";
+        }
+
+        const dashscopeParams: Record<string, any> = { voice };
+        if (config.referenceAudio) {
+            dashscopeParams.reference_audio = config.referenceAudio;
+            if (config.referenceText) dashscopeParams.reference_text = config.referenceText;
+        }
+        const response = await fetchWithTimeout(dashscopeUrl, {
+            method: "POST", signal,
+            headers: {
+                ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                model,
+                input: { text },
+                parameters: dashscopeParams,
+            }),
+        });
+
+        if (!response.ok) {
+            const errText = await response.text().catch(() => "");
+            throw new Error("通义千问 (DashScope) TTS 请求失败 (" + response.status + "): " + errText);
+        }
+
+        const data = await response.json();
+        const audioUrl = data?.output?.audio?.url;
+        if (!audioUrl) {
+            throw new Error("通义千问 TTS 未返回音频地址: " + (data?.message || JSON.stringify(data)));
+        }
+
+        const secureAudioUrl = typeof audioUrl === "string" ? audioUrl.replace(/^http:\/\//i, "https://") : audioUrl;
+        const audioRes = await fetchWithTimeout(secureAudioUrl, { method: "GET", signal });
+        if (!audioRes.ok) {
+            throw new Error("下载合成音频失败 (" + audioRes.status + ")");
+        }
+        const blob = await audioRes.blob();
+        if (!blob.size) throw new Error("语音合成接口返回了空音频");
+        return blob;
+    }
+    const response = await fetchWithTimeout(buildCompatibleVoiceUrl(baseUrl, "speech"), {
+        method: "POST", signal,
+        headers: {
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(isQwenTts(config) ? qwenSpeechBody(text, config, false) : {
+            model: config.model?.trim() || "tts-1",
+            input: text,
+            voice: config.defaultVoice?.trim() || "alloy",
+            response_format: "mp3",
+            ...(config.referenceAudio ? {
+                reference_audio: config.referenceAudio,
+                prompt_audio: config.referenceAudio,
+                prompt_text: config.referenceText,
+                reference_text: config.referenceText,
+            } : {}),
+        }),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`${custom ? "自定义" : "OpenAI"} TTS 请求失败 (${response.status}): ${errText}`);
+    }
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
+    if (contentType.includes("json") || contentType.startsWith("text/")) {
+        throw new Error("语音合成接口未返回音频文件，请检查服务商的接口格式与配置");
+    }
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("语音合成接口返回了空音频");
+    return new Blob([blob], { type: contentType.startsWith("audio/") ? contentType : "audio/mpeg" });
+}
+
+// ── iOS audio playback that coexists with speech recognition ──────────
+// On iOS Safari, playing TTS through an <audio> element keeps the system audio
+// session in "playback" mode, which steals the mic from webkitSpeechRecognition
+// and stops it from restarting on the next turn (calls go silent after one
+// round). To keep hands-free multi-turn working we play through a Web Audio
+// AudioContext and explicitly suspend() it after each clip so iOS hands the
+// audio session back to the microphone. A shared <audio> element is kept as a
+// fallback for browsers without AudioContext.
+
+let _audioCtx: AudioContext | null = null;
+let _sharedAudio: HTMLAudioElement | null = null;
+let _audioUnlocked = false;
+let _unlockListenerInstalled = false;
+
+// ── In-app TTS volume (0..1) ──
+// iOS plays Web Audio on the ringer/voice stream, so the hardware volume keys
+// don't control character speech. This in-app gain does. Synced to localStorage.
+const TTS_VOLUME_KEY = "ai_phone_tts_volume_v1";
+let _ttsVolume = ((): number => {
+    if (typeof window === "undefined") return 1;
+    try {
+        const raw = window.localStorage.getItem(TTS_VOLUME_KEY);
+        const v = raw == null ? 1 : Number(raw);
+        return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+    } catch { return 1; }
+})();
+// Live gain node of the currently-playing AudioContext clip, so the slider can
+// adjust volume mid-sentence.
+let _activeGain: GainNode | null = null;
+
+export function getTtsVolume(): number {
+    return _ttsVolume;
+}
+
+export const TTS_VOLUME_CHANGED_EVENT = "tts-volume-changed";
+
+export function setTtsVolume(volume: number): void {
+    _ttsVolume = Math.min(1, Math.max(0, volume));
+    try { window.localStorage.setItem(TTS_VOLUME_KEY, String(_ttsVolume)); } catch { /* ignore */ }
+    if (_activeGain) { try { _activeGain.gain.value = _ttsVolume; } catch { /* ignore */ } }
+    if (_sharedAudio) { try { _sharedAudio.volume = _ttsVolume; } catch { /* ignore */ } }
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(TTS_VOLUME_CHANGED_EVENT));
+}
+
+// ── 通话音频会话开关 ──
+// 只有通话界面在场时才让 Web Audio 上下文保持 running。此前全局点击解锁会把
+// 上下文永久 resume，页面从第一次点击起就一直持有系统音频会话；叠加通话退出
+// 后识别泄漏，整页音频会被钉在"通话模式"（语音条/试听音量巨大且音量键失灵）。
+let _callAudioSessionActive = false;
+
+/** 通话界面挂载时置 true、卸载/挂断时置 false（false 时立即挂起空闲的上下文）。 */
+export function setCallAudioSessionActive(active: boolean): void {
+    _callAudioSessionActive = active;
+    if (!active && _audioCtx && !_activeGain) {
+        try { void _audioCtx.suspend(); } catch { /* ignore */ }
+    }
+}
+
+function getAudioContext(): AudioContext | null {
+    if (typeof window === "undefined") return null;
+    const Ctor = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctor) return null;
+    if (!_audioCtx) {
+        // 不要钉 sampleRate:部分 iOS 版本上非硬件采样率的 ctx 会"时钟照走、
+        // 输出全静音"(比闷更糟)。防发闷靠 TTS 请求参数(44100/256k)兜底。
+        try { _audioCtx = new Ctor(); } catch { return null; }
+    }
+    return _audioCtx;
+}
+
+function getSharedAudio(): HTMLAudioElement {
+    if (!_sharedAudio) {
+        _sharedAudio = new Audio();
+        _sharedAudio.setAttribute("playsinline", "");
+    }
+    return _sharedAudio;
+}
+
+function silentWavUrl(): string {
+    // A few ms of 16-bit mono PCM silence — a valid source so play() actually
+    // starts (and thus unlocks the element) on iOS.
+    // 采样率用 48kHz 而不是 8kHz：iOS 的系统音频会话采样率会跟着刚播放的媒体走，
+    // 解锁音若是 8kHz，紧接着播的 TTS 会被压到 4kHz 以下而发闷（与保活音同理）。
+    const sampleRate = 48000;
+    const numSamples = 96; // 2ms
+    const dataSize = numSamples * 2;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+    const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+    writeStr(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); writeStr(8, "WAVE");
+    writeStr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    writeStr(36, "data"); view.setUint32(40, dataSize, true);
+    // 16-bit PCM 静音为 0，ArrayBuffer 默认全 0，无需再写
+    return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+}
+
+/**
+ * Unlock audio playback. Must run inside (or synchronously from) a user gesture.
+ * Resumes the AudioContext (primary path) and unlocks the <audio> fallback.
+ * Safe to call repeatedly.
+ */
+export function unlockAudioPlayback(): void {
+    if (typeof window === "undefined") return;
+
+    // Primary path: resume the Web Audio context within the gesture. Once
+    // resumed under a gesture, subsequent programmatic resume()s are allowed.
+    // 非通话期只借这次手势拿"授权"，随即挂起——不让页面平时一直持有音频会话。
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === "suspended") {
+        const keepRunning = _callAudioSessionActive;
+        ctx.resume().then(() => {
+            if (!keepRunning && !_activeGain && !_callAudioSessionActive) {
+                try { void ctx.suspend(); } catch { /* ignore */ }
+            }
+        }).catch(() => {});
+    }
+
+    // Fallback path: unlock the shared <audio> element once.
+    if (_audioUnlocked) return;
+    const audio = getSharedAudio();
+    const url = silentWavUrl();
+    audio.muted = true;
+    audio.src = url;
+    const finish = () => {
+        try { audio.pause(); audio.currentTime = 0; } catch {}
+        audio.muted = false;
+        URL.revokeObjectURL(url);
+        _audioUnlocked = true;
+    };
+    try {
+        const p = audio.play();
+        if (p && typeof p.then === "function") {
+            p.then(finish).catch(() => { audio.muted = false; URL.revokeObjectURL(url); });
+        } else {
+            finish();
+        }
+    } catch {
+        audio.muted = false;
+        URL.revokeObjectURL(url);
+    }
+}
+
+function installUnlockListener(): void {
+    if (_unlockListenerInstalled || typeof window === "undefined") return;
+    _unlockListenerInstalled = true;
+    const handler = () => { unlockAudioPlayback(); };
+    window.addEventListener("touchend", handler, { passive: true });
+    window.addEventListener("pointerdown", handler, { passive: true });
+    window.addEventListener("mousedown", handler, { passive: true });
+}
+
+// Install the first-gesture unlock as soon as this module loads on the client.
+// The call screens import this module statically (via chat-room), so the
+// listener is in place well before the user taps the call button.
+if (typeof window !== "undefined") installUnlockListener();
+
+function decodeAudio(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuffer> {
+    // Support both the promise and legacy callback forms (older webkitAudioContext).
+    return new Promise((resolve, reject) => {
+        const ret = ctx.decodeAudioData(data, resolve, reject);
+        if (ret && typeof (ret as Promise<AudioBuffer>).then === "function") {
+            (ret as Promise<AudioBuffer>).then(resolve, reject);
+        }
+    });
+}
+
+/**
+ * Playback via a shared <audio> element. Used as the fallback when AudioContext
+ * is unavailable, and as the PRIMARY path for gesture-less auto-play scenarios
+ * (e.g. VN/漫卷 auto voice): a media element that was unlocked once keeps playing
+ * programmatically, whereas resuming a suspended AudioContext far from any user
+ * gesture is often rejected on Android Chrome/Edge (the "only plays with WeChat
+ * keep-alive on" bug — the keep-alive's looping silent <audio> was what kept the
+ * context alive). Bonus: media-element playback also obeys hardware volume keys.
+ */
+export function playAudioBlobViaMediaElement(blob: Blob): { promise: Promise<void>; abort: () => void } {
+    return playAudioBlobElement(blob);
+}
+
+function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () => void } {
+    const url = URL.createObjectURL(blob);
+    const audio = getSharedAudio();
+    audio.muted = false;
+    audio.volume = _ttsVolume;
+    audio.src = url;
+
+    let settled = false;
+    let resolveFn: () => void = () => {};
+    const finalize = () => {
+        if (settled) return;
+        settled = true;
+        audio.onended = null;
+        audio.onerror = null;
+        URL.revokeObjectURL(url);
+        try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch {}
+        resolveFn();
+    };
+    const promise = new Promise<void>((resolve) => {
+        resolveFn = resolve;
+        audio.onended = finalize;
+        audio.onerror = finalize;
+        audio.play().catch(() => {
+            finalize();
+        });
+    });
+    return { promise, abort: finalize };
+}
+
+/**
+ * Play an audio blob through the Web Audio context and resolve when playback
+ * ends. After playback the context is suspended so iOS releases the audio
+ * session back to the microphone (lets SpeechRecognition restart next turn).
+ * Returns an abort function to stop playback early. Playback is sequential.
+ */
+export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () => void } {
+    const ctx = getAudioContext();
+    if (!ctx) return playAudioBlobElement(blob);
+
+    let settled = false;
+    let resolveFn: () => void = () => {};
+    let source: AudioBufferSourceNode | null = null;
+
+    let gain: GainNode | null = null;
+    let fallbackAbort: (() => void) | null = null;
+
+    const cleanupWebAudio = () => {
+        if (source) {
+            source.onended = null;
+            try { source.stop(); } catch {}
+            try { source.disconnect(); } catch {}
+            source = null;
+        }
+        if (gain) { try { gain.disconnect(); } catch {} }
+        if (_activeGain === gain) _activeGain = null;
+        gain = null;
+        // Suspend so iOS hands the audio session back to the microphone.
+        try { ctx.suspend(); } catch {}
+    };
+
+    const finalize = () => {
+        if (settled) return;
+        settled = true;
+        cleanupWebAudio();
+        if (fallbackAbort) { fallbackAbort(); fallbackAbort = null; }
+        resolveFn();
+    };
+
+    const promise = new Promise<void>((resolve) => {
+        resolveFn = resolve;
+        (async () => {
+            try {
+                if (ctx.state === "suspended") {
+                    // 程序化 resume 在部分安卓浏览器上会被拒绝，甚至让 promise 永远
+                    // 悬着（要等下一次用户手势）。限时等待后检查状态，走不通就回落。
+                    await Promise.race([
+                        ctx.resume().catch(() => {}),
+                        new Promise(r => setTimeout(r, 800)),
+                    ]);
+                }
+                if (ctx.state !== "running") throw new Error("audio_context_not_running");
+                const audioBuffer = await decodeAudio(ctx, await blob.arrayBuffer());
+                if (settled) return;
+                source = ctx.createBufferSource();
+                source.buffer = audioBuffer;
+                // Route through a gain node so the in-app volume slider applies.
+                gain = ctx.createGain();
+                gain.gain.value = _ttsVolume;
+                source.connect(gain);
+                gain.connect(ctx.destination);
+                _activeGain = gain;
+                source.onended = finalize;
+                source.start();
+            } catch {
+                // Web Audio 走不通（resume 被拒/解码失败等）时回落媒体元素播放：
+                // 宁可这一段绕过「iOS 归还麦克风」的优化，也不要静默无声——
+                // 此前这里直接 finalize，正是「语音条有声、通话没声」的来源之一。
+                if (settled) return;
+                cleanupWebAudio();
+                const fallback = playAudioBlobElement(blob);
+                fallbackAbort = fallback.abort;
+                void fallback.promise.then(() => {
+                    if (settled) return;
+                    settled = true;
+                    fallbackAbort = null;
+                    resolveFn();
+                });
+            }
+        })();
+    });
+
+    return { promise, abort: finalize };
+}

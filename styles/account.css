@@ -1,0 +1,485 @@
+.account-gate-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  padding: max(18px, env(safe-area-inset-top, 0px)) 18px max(18px, env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(circle at 22% 18%, rgba(120, 150, 255, 0.12), transparent 34%),
+    radial-gradient(circle at 78% 86%, rgba(255, 150, 190, 0.12), transparent 38%),
+    #f5f6f8;
+  color: #202633;
+}
+
+main.app-root.account-gate-root {
+  width: 100vw;
+  margin: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.account-gate-panel,
+.account-gate-card {
+  width: min(100%, 390px);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.74);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 22px 60px rgba(35, 43, 60, 0.16);
+}
+
+.account-gate-panel {
+  min-height: 116px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(32, 38, 51, 0.54);
+  font-size: calc(13px*var(--app-text-scale,1));
+  font-weight: 700;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.account-gate-card {
+  border-radius: 28px;
+  padding: 26px 22px 20px;
+}
+
+.account-gate-copy {
+  margin-top: 0;
+}
+
+.account-gate-copy span {
+  display: block;
+  color: rgba(32, 38, 51, 0.46);
+  font-size: calc(11px*var(--app-text-scale,1));
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.account-gate-copy h1 {
+  margin: 8px 0 0;
+  color: #202633;
+  font-size: calc(28px*var(--app-text-scale,1));
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.account-gate-copy p,
+.account-gate-footnote {
+  margin: 8px 0 0;
+  color: rgba(32, 38, 51, 0.62);
+  font-size: calc(13px*var(--app-text-scale,1));
+  line-height: 1.55;
+}
+
+.account-gate-form {
+  display: grid;
+  gap: 13px;
+  margin-top: 22px;
+}
+
+.account-gate-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.account-gate-form label span {
+  color: rgba(32, 38, 51, 0.68);
+  font-size: calc(12px*var(--app-text-scale,1));
+  font-weight: 700;
+}
+
+.account-gate-form input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(32, 38, 51, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #202633;
+  outline: none;
+  padding: 0 14px;
+  font-size: calc(14px*var(--app-text-scale,1));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.account-gate-form input:focus {
+  border-color: rgba(90, 118, 255, 0.5);
+  box-shadow: 0 0 0 4px rgba(90, 118, 255, 0.12);
+}
+
+.account-gate-form button {
+  min-height: 50px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 17px;
+  background: #202633;
+  color: white;
+  font-size: calc(15px*var(--app-text-scale,1));
+  font-weight: 800;
+  margin-top: 2px;
+  touch-action: manipulation;
+}
+
+.account-gate-form button:disabled {
+  opacity: 0.72;
+}
+
+@media (max-width: 520px) {
+  main.app-root.account-gate-root {
+    width: 100vw;
+    height: 100vh;
+    height: 100lvh;
+    min-height: 100vh;
+    min-height: 100lvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 30px 72px;
+    padding: max(48px, calc(env(safe-area-inset-top, 0px) + 28px)) 30px max(72px, calc(env(safe-area-inset-bottom, 0px) + 56px));
+  }
+
+  .account-gate-card {
+    width: min(100%, 328px);
+    margin: 0 auto;
+    border-radius: 24px;
+    padding: 20px 16px 17px;
+  }
+
+  .account-gate-copy {
+    margin-top: 0;
+  }
+
+  .account-gate-copy span {
+    font-size: calc(10px*var(--app-text-scale,1));
+  }
+
+  .account-gate-copy h1 {
+    margin-top: 7px;
+    font-size: calc(25px*var(--app-text-scale,1));
+  }
+
+  .account-gate-copy p,
+  .account-gate-footnote {
+    font-size: calc(12px*var(--app-text-scale,1));
+  }
+
+  .account-gate-form {
+    gap: 11px;
+    margin-top: 18px;
+  }
+
+  .account-gate-form label {
+    gap: 6px;
+  }
+
+  .account-gate-form input {
+    min-height: 46px;
+    border-radius: 15px;
+    padding: 0 13px;
+  }
+
+  .account-gate-form button {
+    min-height: 48px;
+    border-radius: 16px;
+  }
+
+  .account-gate-panel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 380px) {
+  main.app-root.account-gate-root {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+
+  .account-gate-card {
+    width: min(100%, 316px);
+  }
+}
+
+.account-gate-error {
+  border: 1px solid rgba(225, 72, 92, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 236, 239, 0.82);
+  color: #b4233b;
+  padding: 10px 12px;
+  font-size: calc(12px*var(--app-text-scale,1));
+  line-height: 1.45;
+}
+
+.account-gate-spinner {
+  animation: account-gate-spin 0.9s linear infinite;
+}
+
+@keyframes account-gate-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.account-gate-verify-link {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--c-icon, #97896b);
+  text-decoration: none;
+  letter-spacing: 0.04em;
+  align-self: flex-start;
+}
+.account-gate-verify-link:active { opacity: 0.7; }
+
+.account-gate-retry-btn {
+  margin-top: 14px;
+  padding: 10px 32px;
+  border-radius: 10px;
+  border: 1px solid var(--c-line, #ddd2b8);
+  background: var(--c-card, #fff);
+  color: var(--c-text-title, #3a342a);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.account-gate-retry-btn:active { transform: scale(0.97); }
+
+/* Account entry appears inside the same phone frame as the startup artwork. */
+.xunxin-auth-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px 18px;
+  background: rgba(248, 245, 239, 0.35);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.xunxin-auth-card {
+  position: relative;
+  width: min(100%, 352px);
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 30px 24px 22px;
+  border: 1px solid rgba(255, 252, 247, 0.9);
+  border-radius: 26px;
+  background: rgba(255, 252, 247, 0.97);
+  color: #563931;
+  box-shadow: 0 24px 70px rgba(106, 63, 57, 0.18);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-overflow-scrolling: touch;
+}
+.xunxin-auth-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #f1ede7;
+  color: #85685e;
+  cursor: pointer;
+}
+.xunxin-auth-eyebrow {
+  padding-right: 18px;
+  color: #ad7669;
+  font-size: calc(9px * var(--app-text-scale, 1));
+  font-weight: 500;
+  line-height: 1.7;
+  letter-spacing: 0.12em;
+}
+.xunxin-auth-card h1 {
+  margin: 12px 0 8px;
+  color: #563931;
+  font-size: calc(28px * var(--app-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.3;
+}
+.xunxin-auth-subtitle {
+  margin: 0;
+  color: #85685e;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1.7;
+}
+.xunxin-auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 22px 0 20px;
+  padding: 4px;
+  border: 0;
+  border-radius: 13px;
+  background: #f1ede7;
+}
+.xunxin-auth-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 38px;
+  border: 0;
+  padding: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #a48174;
+  font: inherit;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  line-height: 1;
+  cursor: pointer;
+}
+.xunxin-auth-tabs button[aria-pressed="true"] {
+  background: #fff;
+  color: #6a3f39;
+  box-shadow: 0 2px 6px rgba(106, 63, 57, 0.08);
+}
+.xunxin-auth-form { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; }
+.xunxin-auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #73544a;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1.5;
+}
+.xunxin-auth-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid #e8c5b5;
+  border-radius: 12px;
+  padding: 0 13px;
+  background: #f8f5ef;
+  color: #563931;
+  font: inherit;
+  font-size: max(16px, calc(14px * var(--app-text-scale, 1)));
+  outline: none;
+}
+.xunxin-auth-form input::placeholder { color: #ae9589; }
+.xunxin-auth-form input:focus { border-color: #ad7669; box-shadow: 0 0 0 3px rgba(173, 118, 105, 0.16); }
+ .xunxin-password-field { position: relative; display: block; }
+.xunxin-auth-form .xunxin-password-field input { padding-right: 48px; }
+.xunxin-password-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #85685e;
+  cursor: pointer;
+}
+.xunxin-password-toggle:hover { color: #6a3f39; }
+.xunxin-code-row { display: flex; align-items: stretch; gap: 8px; }
+.xunxin-code-row input { flex: 1; width: 0; }
+.xunxin-code-row button {
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid #6a3f39;
+  border-radius: 12px;
+  background: #6a3f39;
+  color: #fff;
+  font: inherit;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  cursor: pointer;
+}
+.xunxin-auth-method { display: flex; flex-wrap: wrap; gap: 12px; }
+.xunxin-auth-method button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #a48174;
+  font: inherit;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  cursor: pointer;
+}
+.xunxin-auth-method button[aria-pressed="true"] { color: #6a3f39; }
+.xunxin-auth-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 13px;
+  background: #6a3f39;
+  color: #fff;
+  font: inherit;
+  font-size: calc(13px * var(--app-text-scale, 1));
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(106, 63, 57, 0.18);
+}
+.xunxin-auth-local { margin-top: 14px; text-align: center; }
+.xunxin-auth-local button {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #e8c5b5;
+  border-radius: 12px;
+  background: transparent;
+  color: #85685e;
+  font: inherit;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  cursor: pointer;
+}
+.xunxin-auth-local p { margin: 6px 0 0; color: #a48174; font-size: calc(10px * var(--app-text-scale, 1)); }
+.xunxin-auth-footnote {
+  margin: 18px 0 0;
+  color: #a48174;
+  font-size: calc(10px * var(--app-text-scale, 1));
+  line-height: 1.7;
+  text-align: center;
+}
+.xunxin-auth-error, .xunxin-auth-notice {
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #fff0f1;
+  color: #b84454;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.xunxin-auth-notice { background: #eef8f1; color: #3f7951; }
+.xunxin-auth-card button:disabled { opacity: 0.5; cursor: default; }
+.xunxin-auth-card button:focus-visible { outline: 2px solid #6a3f39; outline-offset: 3px; }
+
+@media (max-width: 380px) {
+  .xunxin-auth-backdrop { padding: 16px 12px; }
+  .xunxin-auth-card { padding: 28px 18px 18px; }
+  .xunxin-code-row button { padding-inline: 10px; }
+}
+
+.xunxin-auth-method { align-items: center; justify-content: center; }
+.xunxin-auth-method button { font-size: calc(14px * var(--app-text-scale, 1)); }
+.xunxin-auth-method-divider { width: 1px; height: 17px; background: #dcbcae; }
+.xunxin-auth-method button:disabled { opacity: .55; cursor: not-allowed; }

@@ -1,0 +1,36 @@
+/* Check-phone stylesheet entrypoint. Import order preserves the existing cascade.
+ * minimal-skin.css supplies the current phone/messages appearance; appbar.css
+ * applies shared header geometry after the individual app styles. */
+@import "./checkphone/base.css";
+@import "./checkphone/roster.css";
+@import "./checkphone/simulator.css";
+@import "./checkphone/desktop.css";
+@import "./checkphone/notes.css";
+@import "./checkphone/messages.css";
+@import "./checkphone/browser.css";
+@import "./checkphone/phone.css";
+@import "./checkphone/shopping.css";
+@import "./checkphone/assets.css";
+@import "./checkphone/photos.css";
+@import "./checkphone/chat.css";
+@import "./checkphone/xiaohongshu.css";
+@import "./checkphone/reading.css";
+@import "./checkphone/music.css";
+@import "./checkphone/weibo.css";
+@import "./checkphone/email.css";
+@import "./checkphone/douban.css";
+@import "./checkphone/telegram.css";
+@import "./checkphone/assets-premium.css";
+@import "./checkphone/douyin.css";
+@import "./checkphone/takeout.css";
+@import "./checkphone/steam.css";
+@import "./checkphone/bilibili.css";
+@import "./checkphone/youtube.css";
+@import "./checkphone/x.css";
+@import "./checkphone/reddit.css";
+@import "./checkphone/instagram.css";
+@import "./checkphone/feedback.css";
+@import "./checkphone/minimal-skin.css";
+@import "./checkphone/appbar.css";
+@import "./checkphone/history.css";
+@import "./checkphone/scroll-guard.css";

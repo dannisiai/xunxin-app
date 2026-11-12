@@ -1,0 +1,54 @@
+import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
+import { headers } from "next/headers";
+import Script from "next/script";
+import { getAccountForDocument } from "@/lib/server/account-auth";
+
+import { CSSImportEnhancer } from "@/components/css-import-enhancer";
+import { DeviceAdaptationProvider } from "@/components/device-adaptation-provider";
+import { PWAManifestInjector } from "@/components/pwa-manifest-injector";
+import { PWARegistrar } from "@/components/pwa-registrar";
+import "../styles/fonts.css";
+import "./globals.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
+export const metadata: Metadata = {
+  title: "寻信",
+  description: "寻信 · AI 虚拟手机",
+};
+
+export default async function RootLayout({
+  children
+}: Readonly<{
+  children: ReactNode;
+}>) {
+  const requestHeaders = new Headers(await headers());
+  const account = await getAccountForDocument(new Request("http://localhost/", { headers: requestHeaders })).catch(() => null);
+  return (
+    <html lang="zh-CN" data-account-storage-scope={account?.id || ""}>
+      <head>
+        <Script src="/account-storage-bootstrap.js" strategy="beforeInteractive" />
+        <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
+        <meta name="theme-color" content="#f8f7f2" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
+        <link rel="icon" href="/icon-192.png" type="image/png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="寻信" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="mobile-web-app-capable" content="yes" />
+      </head>
+      <body>
+        <PWAManifestInjector />
+        <DeviceAdaptationProvider />
+        <PWARegistrar />
+        <CSSImportEnhancer />
+        {children}
+      </body>
+    </html>
+  );
+}

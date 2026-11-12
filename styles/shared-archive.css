@@ -1,0 +1,4 @@
+.shared-archive-gate { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: max(28px, env(safe-area-inset-top)) 24px; box-sizing: border-box; background: var(--c-page-body-bg, #f7f7f9); color: var(--c-text-title, #252830); overflow-y: auto; }
+.shared-archive-gate h1 { font-size: 22px; margin: 0; }
+.shared-archive-gate p { width: min(100%, 520px); margin: 0; line-height: 1.8; text-align: center; }
+.shared-archive-status { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); left: 16px; right: 16px; z-index: 9999; margin: 0; padding: 12px 16px; border-radius: 14px; background: #34343b; color: white; font-size: 13px; }
