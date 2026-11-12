@@ -30,7 +30,7 @@ subprocess.run(['python',str(args.source/'scripts/check-app-popup-apk.py'),str(s
 manifest=json.loads(feed.read_text(encoding='utf-8'))
 if manifest['versionCode']!=int(meta['SHELL_VERSION_CODE']) or manifest['versionName']!=version:raise SystemExit('Signed APK version mismatch')
 subprocess.run(['gh','release','create',tag,str(signed),str(feed),str(args.artifacts/'popup-audit-signed.json'),'--repo',repo,'--target',meta['GITHUB_SHA'],'--title',f'寻信 {version}','--notes-file',str(download_notes),'--latest'],check=True)
-prior=subprocess.run(['gh','api',f'repos/{repo}/releases/tags/android-ota-stable'],capture_output=True,text=True)
+prior=subprocess.run(['gh','api',f'repos/{repo}/releases/tags/android-ota-stable'],capture_output=True,text=True,encoding='utf-8',errors='replace')
 if prior.returncode==0:
  subprocess.run(['gh','release','upload','android-ota-stable',str(feed),'--repo',repo,'--clobber'],check=True)
 elif 'HTTP 404' in prior.stderr:
