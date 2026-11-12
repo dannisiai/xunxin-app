@@ -27,10 +27,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class AppUpdateManifest(
     val versionCode: Long, val versionName: String, val apkUrl: String,
     val sha256: String, val forceUpdate: Boolean, val releaseNotes: String,
+    val fallbackApkUrl: String? = null,
 ) {
     val identity: String get() = "$versionCode:$sha256:$apkUrl"
     fun json(): JSONObject = JSONObject().put("versionCode", versionCode).put("versionName", versionName)
         .put("apkUrl", apkUrl).put("sha256", sha256).put("forceUpdate", forceUpdate).put("releaseNotes", releaseNotes)
+        .put("fallbackApkUrl", fallbackApkUrl)
     companion object {
         fun parse(json: JSONObject): AppUpdateManifest {
             val code = json.get("versionCode")
@@ -50,7 +52,8 @@ data class AppUpdateManifest(
             require(hash.matches(Regex("[0-9a-f]{64}"))) { "SHA-256 格式无效" }
             val force = json.get("forceUpdate")
             require(force is Boolean) { "forceUpdate 必须为布尔值" }
-            return AppUpdateManifest(value, name, url, hash, force, field("releaseNotes", 20000))
+            val fallback = if (json.isNull("fallbackApkUrl")) null else field("fallbackApkUrl", 8192).trim().also { requireHttps(it) }
+            return AppUpdateManifest(value, name, url, hash, force, field("releaseNotes", 20000), fallback)
         }
         fun requireHttps(raw: String) {
             val url = raw.toHttpUrl()
@@ -65,6 +68,7 @@ enum class AppUpdatePhase { IDLE, CHECKING, AVAILABLE, DOWNLOADING, VERIFYING, P
 data class AppUpdateState(
     val phase: AppUpdatePhase = AppUpdatePhase.IDLE, val manifest: AppUpdateManifest? = null,
     val downloaded: Long = 0, val total: Long = -1, val message: String = "",
+    val downloadHost: String = "",
 ) {
     val required: Boolean get() = manifest?.forceUpdate == true && manifest.versionCode > BuildConfig.VERSION_CODE
 }
@@ -139,11 +143,11 @@ class AppUpdateRepository private constructor(private val context: Context) {
         }
     }
     fun checkAtStartup() { if (!busy.get()) check() }
-    fun check() = run(AppUpdatePhase.CHECKING) {
-        AppUpdateManifest.requireHttps(BuildConfig.UPDATE_MANIFEST_URL)
-        val request = Request.Builder().url(BuildConfig.UPDATE_MANIFEST_URL).header("Cache-Control", "no-cache")
+    private fun readManifest(url: String, timeoutSeconds: Long): AppUpdateManifest {
+        AppUpdateManifest.requireHttps(url)
+        val request = Request.Builder().url(url).header("Cache-Control", "no-cache")
             .header("Accept", "application/json").build()
-        val json = execute(request, 25).use { response ->
+        return execute(request, timeoutSeconds).use { response ->
             if (!response.isSuccessful) throw IOException("检查更新失败（HTTP ${response.code}）")
             val body = response.body ?: throw IOException("更新信息为空")
             if (body.contentLength() > 65536) throw IOException("更新信息过大")
@@ -160,6 +164,15 @@ class AppUpdateRepository private constructor(private val context: Context) {
             }
             AppUpdateManifest.parse(JSONObject(String(bytes, Charsets.UTF_8)))
         }
+    }
+    fun check() = run(AppUpdatePhase.CHECKING) {
+        val mirror = BuildConfig.UPDATE_MIRROR_URL
+        val minimum = state.manifest?.versionCode ?: 0
+        val fromMirror = if (mirror.isBlank() || mirror == BuildConfig.UPDATE_MANIFEST_URL) null else try {
+            readManifest(mirror, 8).takeIf { it.versionCode >= minimum }
+        } catch (_: Exception) { null }
+        val json = fromMirror ?: readManifest(BuildConfig.UPDATE_MANIFEST_URL, 25)
+        if (json.versionCode < minimum) throw IOException("更新源暂未同步，请稍后重试")
         // Enforce a received mandatory policy in memory even if a full disk prevents persistence.
         if (json.forceUpdate && json.versionCode > BuildConfig.VERSION_CODE) publish(state.copy(manifest = json))
         if (!prefs.edit().putString("manifest", json.json().toString()).commit()) throw IOException("无法保存更新信息，请清理存储后重新检查")
@@ -172,7 +185,7 @@ class AppUpdateRepository private constructor(private val context: Context) {
         if (state.phase != AppUpdatePhase.DOWNLOADING && state.phase != AppUpdatePhase.VERIFYING) return
         cancelled = true; call?.cancel()
     }
-    fun download() {
+    fun download(preferredUrl: String? = null) {
         val manifest = state.manifest ?: return
         if (manifest.versionCode <= BuildConfig.VERSION_CODE) return
         run(AppUpdatePhase.DOWNLOADING) {
@@ -186,7 +199,7 @@ class AppUpdateRepository private constructor(private val context: Context) {
                 publish(state.copy(phase = AppUpdatePhase.VERIFYING))
                 verify(manifest, verifiedApk)
             } else {
-                downloadAndVerify(manifest)
+                downloadAndVerify(manifest, preferredUrl)
                 ensureActive()
                 if (!part.renameTo(verifiedApk)) throw IOException("无法保存已验证的安装包")
             }
@@ -236,18 +249,21 @@ class AppUpdateRepository private constructor(private val context: Context) {
         // Fixed private paths only: never touch the WebView, IndexedDB, media, backups or installed APK.
         part.delete(); verifiedApk.delete(); candidate.delete()
     }
-    private fun downloadSources(raw: String): List<String> {
+    fun downloadSources(manifest: AppUpdateManifest): List<String> {
+        val raw = manifest.apkUrl
+        manifest.fallbackApkUrl?.let { return listOf(raw, it).distinct() }
         val prefix = "https://gh-proxy.com/"
         val direct = if (raw.startsWith(prefix)) raw.removePrefix(prefix) else raw
         val url = runCatching { direct.toHttpUrl() }.getOrNull() ?: return listOf(raw)
         val path = url.pathSegments
         if (!url.isHttps || url.host != "github.com" || url.port != 443
-            || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null
+            || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null || url.query != null
             || path.size < 6 || path[2] != "releases" || path[3] != "download") return listOf(raw)
         return listOf(prefix + direct, direct).distinct()
     }
-    private fun downloadAndVerify(manifest: AppUpdateManifest) {
-        val sources = downloadSources(manifest.apkUrl)
+    private fun downloadAndVerify(manifest: AppUpdateManifest, preferredUrl: String?) {
+        val available = downloadSources(manifest)
+        val sources = if (preferredUrl != null && preferredUrl in available) listOf(preferredUrl) else available
         // Resume the same source after a pause; never splice bytes or validators from two sources.
         val savedSource = readCandidate()?.optString("sourceUrl").orEmpty()
         val first = sources.indexOf(savedSource).coerceAtLeast(0)
@@ -258,6 +274,7 @@ class AppUpdateRepository private constructor(private val context: Context) {
                 clearDownload()
                 writeCandidate(manifest, "", "", -1, source)
             }
+            publish(state.copy(downloadHost = source.toHttpUrl().host, downloaded = part.length(), total = -1))
             try {
                 downloadFile(manifest, source)
                 ensureActive()
