@@ -7,10 +7,27 @@ import { usesMiniCPMTts } from "./voice-mode";
 import { isQwenTts, qwenSpeechBody } from "./qwen-tts";
 import { fetchTtsResponse as fetchWithTimeout } from "./tts-request";
 import { playPcmResponse } from "./tts-pcm-player";
+import { isPcmAudioResponse } from "./tts-audio-stream";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
 type SpeechPlayback = { promise: Promise<void>; abort: () => void };
+let streamingPlaybackReservations = 0;
+
+/** A single streaming generation request, also consumed by the Android foreground overlay. */
+export async function requestStreamingSpeech(text: string, config: VoiceApiConfig, signal: AbortSignal): Promise<Response> {
+    if (!isQwenTts(config)) throw new Error("当前语音接口未启用 Qwen 流式协议");
+    const response = await fetchWithTimeout(buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json", ...(config.apiKey?.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) },
+        body: JSON.stringify(qwenSpeechBody(text, config, true)),
+    }, 240_000);
+    if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`Qwen TTS 请求失败（HTTP ${response.status}）`);
+    }
+    return response;
+}
 
 /** Qwen calls/preview stream PCM; cached voice messages can still use synthesizeSpeech. */
 export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
@@ -22,6 +39,8 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
     const signal = controller.signal;
     let playback: SpeechPlayback | null = null;
     let streamContext: AudioContext | null = null;
+    const streaming = isQwenTts(config);
+    if (streaming) streamingPlaybackReservations++;
     const abort = () => { controller.abort(); playback?.abort(); };
     const external = options?.signal;
     if (external?.aborted) abort(); else external?.addEventListener("abort", abort, { once: true });
@@ -36,18 +55,9 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
             signal.throwIfAborted();
         }
         if (context?.state === "running") {
-            const response = await fetchWithTimeout(buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
-                method: "POST", signal,
-                headers: { "Content-Type": "application/json", ...(config.apiKey?.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) },
-                body: JSON.stringify(qwenSpeechBody(text, config, true)),
-            });
-            if (!response.ok) {
-                // Do not repeat a failed generation automatically (including a partial stream).
-                await response.body?.cancel();
-                throw new Error(`Qwen TTS 请求失败（HTTP ${response.status}）`);
-            }
+            const response = await requestStreamingSpeech(text, config, signal);
             const type = (response.headers.get("content-type") || "").toLowerCase();
-            if (/^audio\/(?:x-)?pcm\b/.test(type) || type.startsWith("application/octet-stream")) {
+            if (isPcmAudioResponse(response)) {
                 const gain = context.createGain(); gain.gain.value = _ttsVolume; gain.connect(context.destination);
                 _activeGain = gain;
                 try { await playPcmResponse(response, context, gain, signal); }
@@ -76,10 +86,11 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
         await playback.promise;
         signal.throwIfAborted();
     })().finally(() => {
+        if (streaming) streamingPlaybackReservations--;
         external?.removeEventListener("abort", abort);
         // Failed requests and servers returning a file must also release the preview's
         // Web Audio session. Never suspend another active playback or an ongoing call.
-        if (streamContext && !_activeGain && !_callAudioSessionActive) void streamContext.suspend().catch(() => {});
+        if (streamContext && !streamingPlaybackReservations && !_activeGain && !_callAudioSessionActive) void streamContext.suspend().catch(() => {});
     });
     return { promise, abort };
 }
@@ -435,7 +446,7 @@ export function unlockAudioPlayback(): void {
     if (ctx && ctx.state === "suspended") {
         const keepRunning = _callAudioSessionActive;
         ctx.resume().then(() => {
-            if (!keepRunning && !_activeGain && !_callAudioSessionActive) {
+            if (!keepRunning && !streamingPlaybackReservations && !_activeGain && !_callAudioSessionActive) {
                 try { void ctx.suspend(); } catch { /* ignore */ }
             }
         }).catch(() => {});

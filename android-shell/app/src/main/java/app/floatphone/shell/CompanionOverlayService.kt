@@ -852,6 +852,15 @@ class CompanionOverlayService : Service() {
         if (acceptsVoice(session, id)) voicePlayer.fail(id, message)
     }
 
+    fun beginPcm(session: String, id: String, sampleRate: Int): Boolean =
+        acceptsVoice(session, id) && voicePlayer.beginPcm(id, sampleRate)
+
+    fun appendPcm(session: String, id: String, chunk: String): Int =
+        if (acceptsVoice(session, id)) voicePlayer.appendPcm(id, chunk) else -1
+
+    fun finishPcm(session: String, id: String) { if (acceptsVoice(session, id)) voicePlayer.finishPcm(id) }
+    fun stopPcm(session: String, id: String) { if (acceptsVoice(session, id)) voicePlayer.stopPcm(id) }
+
     private fun cancelWebRequest(id: String) {
         MainActivity.companionHost.get()?.dispatchCompanionEvent("android-companion-cancel", JSONObject()
             .put("overlayId", overlayId).put("requestId", id))

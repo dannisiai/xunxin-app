@@ -1,4 +1,5 @@
 import { Pcm16Decoder } from "./qwen-tts";
+import { openPcmAudioStream } from "./tts-audio-stream";
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
@@ -11,18 +12,13 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Incremental mono S16LE playback. Bound scheduled audio instead of buffering a whole utterance. */
 export async function playPcmResponse(response: Response, context: AudioContext, gain: GainNode, signal: AbortSignal): Promise<void> {
-    const type = response.headers.get("content-type") || "";
-    const rate = Number(type.match(/\brate\s*=\s*"?(\d+)/i)?.[1] || 24000);
-    const channels = Number(type.match(/\bchannels\s*=\s*"?(\d+)/i)?.[1] || 1);
-    if (rate < 8000 || rate > 96000 || channels !== 1 || !response.body) {
-        await response.body?.cancel(); throw new Error("语音流的采样率或声道格式不受支持");
-    }
-    const reader = response.body.getReader(), decoder = new Pcm16Decoder();
+    const stream = await openPcmAudioStream(response, signal);
+    const rate = stream.sampleRate, decoder = new Pcm16Decoder();
     const sources = new Set<AudioBufferSourceNode>();
     let nextTime = context.currentTime, count = 0, pending: Float32Array[] = [], pendingCount = 0;
     const cancel = () => {
         for (const source of sources) { try { source.stop(); source.disconnect(); } catch {} }
-        sources.clear(); void reader.cancel().catch(() => {});
+        sources.clear(); void stream.cancel().catch(() => {});
     };
     const flush = async () => {
         if (!pendingCount) return;
@@ -42,11 +38,9 @@ export async function playPcmResponse(response: Response, context: AudioContext,
     signal.addEventListener("abort", cancel, { once: true });
     try {
         signal.throwIfAborted();
-        while (true) {
-            const chunk = await reader.read();
+        for await (const chunk of stream.chunks) {
             signal.throwIfAborted();
-            if (chunk.done) break;
-            const samples = decoder.decode(chunk.value);
+            const samples = decoder.decode(chunk);
             count += samples.length;
             if (count > rate * 180) throw new Error("语音流超过 180 秒上限");
             // At most 100ms per node, even if a proxy delivers a very large HTTP chunk.
@@ -65,6 +59,6 @@ export async function playPcmResponse(response: Response, context: AudioContext,
             await pause(40, signal);
         }
     } finally {
-        signal.removeEventListener("abort", cancel); cancel(); reader.releaseLock();
+        signal.removeEventListener("abort", cancel); cancel();
     }
 }

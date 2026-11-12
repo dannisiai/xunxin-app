@@ -466,7 +466,7 @@ export function VoiceSettings({ embedded = false, accountId }: { embedded?: bool
                                                 disabled={!SUPPORTED_VOICE_PROVIDERS.has(config.provider)}
                                                 className="ui-btn ui-btn-soft-action" data-active={playingVoiceId === config.id}>
                                                 {playingVoiceId === config.id ? <Pause size={18} /> : <Play size={18} />}
-                                                {playingVoiceId === config.id ? "停止试听" : "试听合成音色"}
+                                                {playingVoiceId === config.id ? "停止试听" : "流式试听合成音色"}
                                             </button>}
                                             {fetchError[config.id] && <Alert variant="danger"><AlertCircle size={14} />{fetchError[config.id]}</Alert>}
                                         </div>

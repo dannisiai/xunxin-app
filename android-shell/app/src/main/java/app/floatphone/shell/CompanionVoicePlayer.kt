@@ -35,6 +35,7 @@ class CompanionVoicePlayer(
     private var closed = false
     private var cached: File? = null
     private var player: MediaPlayer? = null
+    private var pcm: CompanionPcmStream? = null
     private var focus: AudioFocusRequest? = null
     private var loadingTimeout: Runnable? = null
     var state = "idle"
@@ -61,7 +62,7 @@ class CompanionVoicePlayer(
 
     fun begin(id: String, length: Int) {
         if (closed || !accepting || requestId != id) return
-        if (length <= 0 || length > MAX_ENCODED || encoded != null) {
+        if (length <= 0 || length > MAX_ENCODED || encoded != null || pcm != null) {
             fail(id, "回复音频过长或数据异常，请重试。")
             return
         }
@@ -113,6 +114,67 @@ class CompanionVoicePlayer(
             }
         }
     }
+
+    fun beginPcm(id: String, sampleRate: Int): Boolean {
+        if (closed || !accepting || requestId != id || encoded != null || pcm != null || sampleRate !in 8000..96000) return false
+        val ticket = generation
+        val next = CompanionPcmStream(sampleRate, attributes, directory,
+            onStarted = { handler.post {
+                if (!closed && generation == ticket && requestId == id) { state = "playing"; onChanged() }
+            } },
+            onCompleted = { file -> handler.post {
+                if (closed || generation != ticket || requestId != id) file.delete()
+                else {
+                    pcm = null; accepting = false
+                    loadingTimeout?.let { handler.removeCallbacks(it) }; loadingTimeout = null
+                    cached?.delete(); cached = file
+                    focus?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }; focus = null
+                    onPlaybackActive(false); state = "ready"; onChanged()
+                }
+            } },
+            onFailed = { handler.post {
+                if (!closed && generation == ticket && requestId == id) fail(id, "流式语音播放失败，可点重试。")
+            } })
+        pcm = next
+        return try {
+            onPlaybackActive(true)
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(attributes).setWillPauseWhenDucked(true)
+                .setOnAudioFocusChangeListener({ change -> if (change < 0 && pcm === next) stop() }, handler).build()
+            focus = request
+            if (audioManager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                fail(id, "暂时无法播放语音，可稍后点重试。")
+                false
+            } else {
+                armTimeout(240_000L); next.start(); true
+            }
+        } catch (_: Exception) {
+            fail(id, "无法开始流式语音，可点重试。")
+            false
+        }
+    }
+
+    fun appendPcm(id: String, chunk: String): Int {
+        if (closed || !accepting || requestId != id) return -1
+        val stream = pcm ?: return -1
+        return try {
+            if (chunk.length > CHUNK_SIZE) throw IllegalArgumentException()
+            val result = stream.append(Base64.decode(chunk, Base64.NO_WRAP))
+            if (result < 0) fail(id, "流式音频数据异常，请重试。")
+            result
+        } catch (_: Exception) {
+            fail(id, "无法读取流式音频，请重试。")
+            -1
+        }
+    }
+
+    fun finishPcm(id: String) {
+        if (closed || !accepting || requestId != id) return
+        accepting = false
+        pcm?.finish()
+    }
+
+    fun stopPcm(id: String) { if (requestId == id && pcm != null) stop() }
 
     fun fail(id: String, message: String) {
         if (closed || requestId != id) return
@@ -174,6 +236,7 @@ class CompanionVoicePlayer(
         loadingTimeout?.let { handler.removeCallbacks(it) }; loadingTimeout = null
         accepting = false
         encoded = null
+        pcm?.cancel(); pcm = null
         player?.let { runCatching { it.release() } }; player = null
         focus?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }; focus = null
         onPlaybackActive(false)

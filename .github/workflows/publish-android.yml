@@ -87,7 +87,7 @@ jobs:
               raise SystemExit('Production signing certificate is not configured')
           package = temp / 'package'
           package.mkdir()
-          notes = os.environ.get('REQUESTED_NOTES') or '移除三处编码的使用声明弹窗；伴宠与一起看共用每个 AI 的自定义头像；无头像显示名字；保留原对话气泡并支持拖动；语音参考音频支持 WAV、MP3、FLAC、M4A。'
+          notes = os.environ.get('REQUESTED_NOTES') or '移除三处编码的使用声明弹窗；伴宠与一起看共用每个 AI 的自定义头像；无头像显示名字；保留原对话气泡并支持拖动；语音参考音频支持 WAV、MP3、FLAC、M4A；一起看语音回复与试听支持 Qwen PCM/WAV 流式播放。'
           (package / 'notes.md').write_text(notes, encoding='utf-8')
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write(f'SHELL_VERSION_CODE={code}\nSHELL_VERSION_NAME={version}\nRELEASE_TAG=android-v{version}-{code}\n')

@@ -671,6 +671,39 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { if (isTrustedPage()) CompanionOverlayService.current?.finishAudio(overlayId, requestId) }
         }
 
+        private fun streamingAudioOnUi(action: () -> Int): Int {
+            val result = java.util.concurrent.atomic.AtomicInteger(-1)
+            val abandoned = java.util.concurrent.atomic.AtomicBoolean(false)
+            val ready = java.util.concurrent.CountDownLatch(1)
+            runOnUiThread {
+                try { if (!abandoned.get() && isTrustedPage()) result.set(action()) }
+                finally { ready.countDown() }
+            }
+            if (!ready.await(3, java.util.concurrent.TimeUnit.SECONDS)) { abandoned.set(true); return -1 }
+            return result.get()
+        }
+
+        @JavascriptInterface
+        fun beginCompanionPcm(overlayId: String, requestId: String, sampleRate: Int): Boolean = streamingAudioOnUi {
+            if (CompanionOverlayService.current?.beginPcm(overlayId, requestId, sampleRate) == true) 1 else -1
+        } == 1
+
+        @JavascriptInterface
+        fun appendCompanionPcm(overlayId: String, requestId: String, chunk: String): Int {
+            if (chunk.length > 48 * 1024) return -1
+            return streamingAudioOnUi { CompanionOverlayService.current?.appendPcm(overlayId, requestId, chunk) ?: -1 }
+        }
+
+        @JavascriptInterface
+        fun finishCompanionPcm(overlayId: String, requestId: String) {
+            runOnUiThread { if (isTrustedPage()) CompanionOverlayService.current?.finishPcm(overlayId, requestId) }
+        }
+
+        @JavascriptInterface
+        fun stopCompanionPcm(overlayId: String, requestId: String) {
+            runOnUiThread { if (isTrustedPage()) CompanionOverlayService.current?.stopPcm(overlayId, requestId) }
+        }
+
         @JavascriptInterface
         fun failCompanionAudio(overlayId: String, requestId: String, message: String) {
             val safeMessage = message.take(200)
