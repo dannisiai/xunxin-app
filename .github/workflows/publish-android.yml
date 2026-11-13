@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
-      NEXT_PUBLIC_SELF_HOSTED_MODE: 'false'
+      NEXT_PUBLIC_SELF_HOSTED_MODE: 'true'
       XUNXIN_ANDROID_BUILD: '1'
       XUNXIN_ANDROID_LOCAL: '1'
       NEXT_TELEMETRY_DISABLED: '1'
@@ -159,7 +159,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish release and automatic update channel
-        if: env.CLOUD_SIGNING_CONFIGURED == 'true'
+        if: ${{ false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

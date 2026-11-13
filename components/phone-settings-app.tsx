@@ -4,17 +4,14 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContex
 import { Activity, Check, ChevronRight, Clock, Coins, Copy, Database, FileText, Fingerprint, Gift, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
-import { cloudAccountConfig } from "@/lib/cloud-account";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 import { changeAccountPassword } from "@/lib/account-client";
-import { RechargeCenter } from "./settings/recharge-center";
-import { CloudApiSettings } from "./settings/cloud-api-settings";
 import { DisplayRefreshSettings } from "./settings/display-refresh-settings";
-import { InvitationCard } from "./settings/invitation-card";
-import { ModelPricing } from "./settings/model-pricing";
 import { AppUpdateSettings } from "./settings/app-update-settings";
 import { MediaPermissionSettings } from "./settings/media-permission-settings";
 import { ImageGenerationSettings } from "./settings/image-generation-settings";
+import { ApiSettings } from "./settings/api-settings";
+import { VoiceSettings } from "./settings/voice-settings";
 import { PresetManager } from "./settings/preset-manager";
 import { WorldBookManager } from "./settings/worldbook-manager";
 import { RegexManager } from "./settings/regex-manager";
@@ -49,10 +46,9 @@ type SettingsPageProps = {
 };
 
 type SubPage =
-    | "recharge"
     | "main"
-    | "credential"
-    | "modelPricing"
+    | "api"
+    | "voice"
     | "imageGeneration"
     | "presets"
     | "worldbook"
@@ -68,8 +64,8 @@ type SubPage =
     | "about";
 
 const SETTINGS_MENU = [
-    { id: "recharge", icon: KeyRound, label: "充值与余额", desc: "余额，消费记录，token用量", iconColor: BINDING_ACCENTS.api , glass: "api" },
-    { id: "credential", icon: KeyRound, label: "账户凭证", desc: "模型选择与 API 地址", iconColor: BINDING_ACCENTS.api , glass: "api" },
+    { id: "api", icon: KeyRound, label: "API 配置", desc: "接口地址、密钥与模型", iconColor: BINDING_ACCENTS.api, glass: "api" },
+    { id: "voice", icon: Mic, label: "语音模型配置", desc: "语音合成与识别方案", iconColor: BINDING_ACCENTS.voice, glass: "" },
     { id: "imageGeneration", icon: Image, label: "图像生成 API", desc: "模型、参考图与提示词", iconColor: CONTENT_APP_ACCENTS.moments , glass: "image-generation" },
     { id: "presets", icon: Fingerprint, label: "预设", desc: "角色预设", iconColor: BINDING_ACCENTS.preset , glass: "presets" },
     { id: "worldbook", icon: Globe, label: "世界书", desc: "世界观设定", iconColor: BINDING_ACCENTS.worldBook , glass: "worldbook" },
@@ -125,11 +121,6 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [pwdError, setPwdError] = useState("");
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [accountSheetOpen, setAccountSheetOpen] = useState(false);
-    const [redeemOpen, setRedeemOpen] = useState(false);
-    const [redeemCode, setRedeemCode] = useState("");
-    const [redeemBusy, setRedeemBusy] = useState(false);
-    const [redeemError, setRedeemError] = useState("");
-    const redeemBusyRef = useRef(false);
 
     // ── 管理中心入口：仅 role=admin 的账号可见 ──
     const [isAdmin, setIsAdmin] = useState(false);
@@ -189,7 +180,6 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         ? "设置"
         : currentPage === "imageGeneration" || currentPage === "presets" || currentPage === "worldbook" || currentPage === "regex" || currentPage === "identity"
             ? ""
-            : currentPage === "recharge" ? "充值与余额" : currentPage === "credential" ? "账户凭证" : currentPage === "modelPricing" ? "模型价格"
             : currentPage === "moderation"
                 ? "管理中心"
                 : SETTINGS_MENU.find(m => m.id === currentPage)?.label || "设置";
@@ -230,21 +220,6 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
             setCurrentPage(item.id as SubPage);
         },
     });
-
-    const openRedemption = () => { setRedeemCode(""); setRedeemError(""); setRedeemOpen(true); };
-    const submitRedemption = async () => {
-        const code = redeemCode.trim();
-        if (redeemBusyRef.current) return;
-        if (!code) { setRedeemError("请输入兑换码。"); return; }
-        redeemBusyRef.current = true; setRedeemBusy(true); setRedeemError("");
-        try {
-            const response = await fetch("/api/account/redeem", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "X-Account-Id": account.id }, body: JSON.stringify({ code }) });
-            const result = await response.json();
-            if (!response.ok || !result.ok) throw new Error(result.error || "兑换失败，请检查兑换码。");
-            setRedeemOpen(false); setRedeemCode(""); onNotice("兑换成功，请前往充值与余额查看账户余额。");
-        } catch (error) { setRedeemError(error instanceof Error ? error.message : "兑换结果暂时无法确认，请检查余额或兑换记录后再试。"); }
-        finally { redeemBusyRef.current = false; setRedeemBusy(false); }
-    };
 
     const handleTimeAwareChange = useCallback((next: boolean) => {
         setTimeAware(next);
@@ -323,12 +298,10 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
 
     const renderSubPage = () => {
         switch (currentPage) {
-            case "recharge":
-                return cloudAccountConfig(account.id) ? <RechargeCenter key={account.id} accountId={account.id} /> : <p>请登录云端账户以使用充值中心。</p>;
-            case "modelPricing":
-                return <ModelPricing />;
-            case "credential":
-                return cloudAccountConfig(account.id) ? <CloudApiSettings key={account.id} /> : <p>请登录云端账户以使用账户凭证。</p>;
+            case "api":
+                return <ApiSettings />;
+            case "voice":
+                return <VoiceSettings />;
             case "imageGeneration":
                 return <ImageGenerationSettings />;
             case "presets":
@@ -410,7 +383,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         <SettingsContext.Provider value={{ setSubpageTitle, setOverrideBack, setSubpageRightAction }}>
           <AdaptiveWorkspace title="设置" selected={currentPage} onClose={onClose}
             destinations={[{ id: "main", label: "概览", icon: <SlidersHorizontal size={20} /> },
-              ...SETTINGS_MENU.filter(item => !["recharge", "credential"].includes(item.id) || (!selfHostedMode && account.id.startsWith("sub2api_"))).map(item => ({ id: item.id, label: item.label, description: item.desc, icon: <item.icon size={20} /> })),
+              ...SETTINGS_MENU.map(item => ({ id: item.id, label: item.label, description: item.desc, icon: <item.icon size={20} /> })),
               ...(isAdmin ? [{ id: "moderation", label: "管理中心", icon: <Activity size={20} /> }] : [])]}
             onSelect={id => {
               if (overrideBack && id !== currentPage) { onNotice("请先返回当前分类，完成或取消正在编辑的内容"); return; }
@@ -430,29 +403,14 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                 <ChevronRight size={18} className="settings-account-chevron" />
                             </button>
                         )}
-                        {!selfHostedMode && account.id.startsWith("sub2api_") && (
-                            <button type="button" className="settings-account-card" onClick={() => setCurrentPage("recharge")}>
-                                <span className="settings-account-avatar"><KeyRound size={23} /></span>
-                                <span className="settings-account-copy"><span className="settings-account-name">充值与余额</span><span className="settings-account-sub">余额，消费记录，token用量</span></span>
-                                <ChevronRight size={18} className="settings-account-chevron" />
-                            </button>
-                        )}
-                        {!selfHostedMode && account.id.startsWith("sub2api_") && <CardGrid
-                            label="API Config"
-                            labelClassName="settings-menu-section-title"
-                            items={[
-                                ...SETTINGS_MENU.filter(item => item.id === "credential").map(makeCardItem),
-                                { id: "redeem", icon: Gift, label: "兑换码", desc: "兑换账户余额", iconColor: BINDING_ACCENTS.api, onClick: openRedemption },
-                            ]}
-                        />}
-                        {!selfHostedMode && account.id.startsWith("sub2api_") && <button type="button" className="settings-account-card" onClick={() => setCurrentPage("modelPricing")}>
-                            <span className="settings-account-avatar"><Coins size={23} /></span>
-                            <span className="settings-account-copy"><span className="settings-account-name">模型价格</span><span className="settings-account-sub">查看模型调用价格</span></span>
-                            <ChevronRight size={18} className="settings-account-chevron" />
-                        </button>}
-                        {!selfHostedMode && account.id.startsWith("sub2api_") && <InvitationCard accountId={account.id} />}
                         <DisplayRefreshSettings />
                         <MediaPermissionSettings />
+                        <div className="settings-api-section">
+                            <h3 className="settings-menu-section-title">API 配置</h3>
+                            <div className="mt-[10px]">
+                                <CardGrid items={SETTINGS_MENU.filter(item => ["api", "voice"].includes(item.id)).map(makeCardItem)} />
+                            </div>
+                        </div>
                         <div className="settings-data-rules-section">
                             <h3 className="settings-menu-section-title">Data & Rules</h3>
                             <div className="mt-[10px] flex flex-col gap-3">
@@ -644,22 +602,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                             </section>
                         )}
 
-                        {redeemOpen && (
-                            <div className="modal-overlay" data-ui="modal" onClick={() => { if (!redeemBusy) setRedeemOpen(false); }}>
-                                <div className="modal-sheet settings-redeem-dialog" data-ui="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="redeem-title" onClick={event => event.stopPropagation()}>
-                                    <div className="modal-header" data-ui="modal-header">
-                                        <button type="button" className="modal-header-btn modal-header-btn-muted" aria-label="关闭" disabled={redeemBusy} onClick={() => setRedeemOpen(false)}><X size={18} /></button>
-                                        <h3 id="redeem-title" className="modal-title">兑换码</h3>
-                                        <span />
-                                    </div>
-                                    <form className="modal-body flex flex-col gap-3" data-ui="modal-body" onSubmit={event => { event.preventDefault(); void submitRedemption(); }}>
-                                        <input id="redeem-code" aria-label="兑换码" className="ui-input" value={redeemCode} onChange={event => setRedeemCode(event.target.value)} maxLength={256} autoComplete="off" disabled={redeemBusy} placeholder="请输入兑换码" />
-                                        {redeemError && <p role="alert" className="ts-12" style={{ color: "var(--c-danger)" }}>{redeemError}</p>}
-                                        <button type="submit" className="ui-btn ui-btn-primary" disabled={redeemBusy}>{redeemBusy ? "兑换中…" : "确认兑换"}</button>
-                                    </form>
-                                </div>
-                            </div>
-                        )}
+
                         {pwdModalOpen && (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={closePwdModal}>
                                 <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>

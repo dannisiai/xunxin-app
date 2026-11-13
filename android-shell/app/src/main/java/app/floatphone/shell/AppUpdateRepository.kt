@@ -27,12 +27,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class AppUpdateManifest(
     val versionCode: Long, val versionName: String, val apkUrl: String,
     val sha256: String, val forceUpdate: Boolean, val releaseNotes: String,
-    val fallbackApkUrl: String? = null,
 ) {
     val identity: String get() = "$versionCode:$sha256:$apkUrl"
     fun json(): JSONObject = JSONObject().put("versionCode", versionCode).put("versionName", versionName)
         .put("apkUrl", apkUrl).put("sha256", sha256).put("forceUpdate", forceUpdate).put("releaseNotes", releaseNotes)
-        .put("fallbackApkUrl", fallbackApkUrl)
     companion object {
         fun parse(json: JSONObject): AppUpdateManifest {
             val code = json.get("versionCode")
@@ -47,18 +45,19 @@ data class AppUpdateManifest(
             val name = field("versionName", 80).trim()
             require(name.isNotEmpty()) { "版本名称为空" }
             val url = field("apkUrl", 8192).trim()
-            requireHttps(url)
+            requireUpdateOrigin(url)
             val hash = field("sha256", 64).lowercase()
             require(hash.matches(Regex("[0-9a-f]{64}"))) { "SHA-256 格式无效" }
             val force = json.get("forceUpdate")
             require(force is Boolean) { "forceUpdate 必须为布尔值" }
-            val fallback = if (json.isNull("fallbackApkUrl")) null else field("fallbackApkUrl", 8192).trim().also { requireHttps(it) }
-            return AppUpdateManifest(value, name, url, hash, force, field("releaseNotes", 20000), fallback)
+            return AppUpdateManifest(value, name, url, hash, force, field("releaseNotes", 20000))
         }
-        fun requireHttps(raw: String) {
+        fun requireUpdateOrigin(raw: String) {
             val url = raw.toHttpUrl()
-            require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null) {
-                "更新地址必须为不含内嵌账号密码或片段的 HTTPS 地址"
+            val origin = BuildConfig.UPDATE_MANIFEST_URL.toHttpUrl()
+            require(url.isHttps && url.host == origin.host && url.port == origin.port
+                && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null) {
+                "更新地址必须属于日本更新服务器"
             }
         }
     }
@@ -68,7 +67,6 @@ enum class AppUpdatePhase { IDLE, CHECKING, AVAILABLE, DOWNLOADING, VERIFYING, P
 data class AppUpdateState(
     val phase: AppUpdatePhase = AppUpdatePhase.IDLE, val manifest: AppUpdateManifest? = null,
     val downloaded: Long = 0, val total: Long = -1, val message: String = "",
-    val downloadHost: String = "",
 ) {
     val required: Boolean get() = manifest?.forceUpdate == true && manifest.versionCode > BuildConfig.VERSION_CODE
 }
@@ -106,8 +104,8 @@ class AppUpdateRepository private constructor(private val context: Context) {
     @Volatile var state = AppUpdateState(manifest = readCached())
         private set
     // Use the existing OkHttp dependency and normal platform CA/hostname verification.
-    // No HTTP initial URL or HTTPS -> HTTP redirect is accepted, including redirect chains.
-    private val client = OkHttpClient.Builder().followRedirects(true).followSslRedirects(false)
+    // Do not follow redirects: neither the feed nor the APK may leave the configured origin.
+    private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.MINUTES).build()
 
@@ -144,7 +142,7 @@ class AppUpdateRepository private constructor(private val context: Context) {
     }
     fun checkAtStartup() { if (!busy.get()) check() }
     private fun readManifest(url: String, timeoutSeconds: Long): AppUpdateManifest {
-        AppUpdateManifest.requireHttps(url)
+        AppUpdateManifest.requireUpdateOrigin(url)
         val request = Request.Builder().url(url).header("Cache-Control", "no-cache")
             .header("Accept", "application/json").build()
         return execute(request, timeoutSeconds).use { response ->
@@ -166,12 +164,8 @@ class AppUpdateRepository private constructor(private val context: Context) {
         }
     }
     fun check() = run(AppUpdatePhase.CHECKING) {
-        val mirror = BuildConfig.UPDATE_MIRROR_URL
         val minimum = state.manifest?.versionCode ?: 0
-        val fromMirror = if (mirror.isBlank() || mirror == BuildConfig.UPDATE_MANIFEST_URL) null else try {
-            readManifest(mirror, 8).takeIf { it.versionCode >= minimum }
-        } catch (_: Exception) { null }
-        val json = fromMirror ?: readManifest(BuildConfig.UPDATE_MANIFEST_URL, 25)
+        val json = readManifest(BuildConfig.UPDATE_MANIFEST_URL, 25)
         if (json.versionCode < minimum) throw IOException("更新源暂未同步，请稍后重试")
         // Enforce a received mandatory policy in memory even if a full disk prevents persistence.
         if (json.forceUpdate && json.versionCode > BuildConfig.VERSION_CODE) publish(state.copy(manifest = json))
@@ -185,13 +179,13 @@ class AppUpdateRepository private constructor(private val context: Context) {
         if (state.phase != AppUpdatePhase.DOWNLOADING && state.phase != AppUpdatePhase.VERIFYING) return
         cancelled = true; call?.cancel()
     }
-    fun download(preferredUrl: String? = null) {
+    fun download() {
         val manifest = state.manifest ?: return
         if (manifest.versionCode <= BuildConfig.VERSION_CODE) return
         run(AppUpdatePhase.DOWNLOADING) {
             root.mkdirs(); verifiedApk.parentFile?.mkdirs()
             val saved = readCandidate()
-            if (saved?.optString("identity") != manifest.identity) {
+            if (saved?.optString("identity") != manifest.identity || saved?.optString("sourceUrl") != manifest.apkUrl) {
                 clearDownload()
                 writeCandidate(manifest, "", "", -1)
             }
@@ -199,7 +193,10 @@ class AppUpdateRepository private constructor(private val context: Context) {
                 publish(state.copy(phase = AppUpdatePhase.VERIFYING))
                 verify(manifest, verifiedApk)
             } else {
-                downloadAndVerify(manifest, preferredUrl)
+                downloadFile(manifest, manifest.apkUrl)
+                ensureActive()
+                publish(state.copy(phase = AppUpdatePhase.VERIFYING, downloaded = part.length(), total = part.length()))
+                verify(manifest, part)
                 ensureActive()
                 if (!part.renameTo(verifiedApk)) throw IOException("无法保存已验证的安装包")
             }
@@ -223,12 +220,12 @@ class AppUpdateRepository private constructor(private val context: Context) {
     }
     private fun ensureActive() { if (cancelled) throw UpdateCancelled() }
     private fun execute(request: Request, timeoutSeconds: Long = 1800): Response {
-        ensureActive(); AppUpdateManifest.requireHttps(request.url.toString())
+        ensureActive(); AppUpdateManifest.requireUpdateOrigin(request.url.toString())
         val current = client.newCall(request); call = current
         current.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
         val response = current.execute()
         if (!response.request.url.isHttps || response.isRedirect) {
-            response.close(); throw IOException("更新重定向无效，禁止降级到 HTTP")
+            response.close(); throw IOException("日本更新服务器返回了重定向，请稍后重试")
         }
         return response
     }
@@ -248,48 +245,6 @@ class AppUpdateRepository private constructor(private val context: Context) {
     private fun clearDownload() {
         // Fixed private paths only: never touch the WebView, IndexedDB, media, backups or installed APK.
         part.delete(); verifiedApk.delete(); candidate.delete()
-    }
-    fun downloadSources(manifest: AppUpdateManifest): List<String> {
-        val raw = manifest.apkUrl
-        manifest.fallbackApkUrl?.let { return listOf(raw, it).distinct() }
-        val prefix = "https://gh-proxy.com/"
-        val direct = if (raw.startsWith(prefix)) raw.removePrefix(prefix) else raw
-        val url = runCatching { direct.toHttpUrl() }.getOrNull() ?: return listOf(raw)
-        val path = url.pathSegments
-        if (!url.isHttps || url.host != "github.com" || url.port != 443
-            || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null || url.query != null
-            || path.size < 6 || path[2] != "releases" || path[3] != "download") return listOf(raw)
-        return listOf(prefix + direct, direct).distinct()
-    }
-    private fun downloadAndVerify(manifest: AppUpdateManifest, preferredUrl: String?) {
-        val available = downloadSources(manifest)
-        val sources = if (preferredUrl != null && preferredUrl in available) listOf(preferredUrl) else available
-        // Resume the same source after a pause; never splice bytes or validators from two sources.
-        val savedSource = readCandidate()?.optString("sourceUrl").orEmpty()
-        val first = sources.indexOf(savedSource).coerceAtLeast(0)
-        for (index in first..sources.lastIndex) {
-            ensureActive()
-            val source = sources[index]
-            if (readCandidate()?.optString("sourceUrl") != source) {
-                clearDownload()
-                writeCandidate(manifest, "", "", -1, source)
-            }
-            publish(state.copy(downloadHost = source.toHttpUrl().host, downloaded = part.length(), total = -1))
-            try {
-                downloadFile(manifest, source)
-                ensureActive()
-                publish(state.copy(phase = AppUpdatePhase.VERIFYING, downloaded = part.length(), total = part.length()))
-                verify(manifest, part)
-                return
-            } catch (failure: IOException) {
-                ensureActive()
-                // Storage errors and user cancellation must not trigger another network download.
-                if (index == sources.lastIndex || (failure !is DownloadSourceUnavailable && failure !is RejectedUpdate)) throw failure
-                clearDownload()
-                publish(state.copy(phase = AppUpdatePhase.DOWNLOADING, downloaded = 0, total = -1,
-                    message = "加速下载未成功，正在尝试备用下载地址"))
-            }
-        }
     }
     private fun downloadFile(manifest: AppUpdateManifest, sourceUrl: String) {
         var restarted = false

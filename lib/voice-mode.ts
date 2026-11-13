@@ -4,6 +4,11 @@ export function resolveVoiceMode(_config: Pick<VoiceApiConfig, "provider" | "voi
     return "tts";
 }
 
+export function voiceSynthesisBlockReason(config: Pick<VoiceApiConfig, "enableTTS"> | null): string | null {
+    if (!config) return "未找到当前角色的语音方案。请在语音设置或绑定管理中选择方案。";
+    return config.enableTTS === false ? "当前语音方案已关闭合成。请在语音方案中开启「语音合成」。" : null;
+}
+
 export function isMiniCPMVoiceConfig(config: Pick<VoiceApiConfig, "provider" | "voiceMode" | "customTtsProtocol" | "realtimeProtocol">): boolean {
     return config.provider === "MiniCPMRealtime" || (config.provider === "Custom"
         && config.customTtsProtocol === "minicpm");

@@ -14,6 +14,10 @@ export function requiresQwenReference(config: VoiceApiConfig): boolean {
     return isQwenTts(config) && /(?:^|[-_/\s])base(?:$|[-_/\s])/i.test(config.model || "");
 }
 
+export function supportsQwenPcmStream(config: VoiceApiConfig): boolean {
+    return isQwenTts(config) && (config.qwenPcmProtocol === "raw-pcm" || config.qwenPcmProtocol === "vllm-omni");
+}
+
 export function qwenSpeechBody(text: string, config: VoiceApiConfig, stream: boolean) {
     const reference = config.referenceAudio?.trim();
     const transcript = config.referenceText?.trim();
@@ -25,6 +29,7 @@ export function qwenSpeechBody(text: string, config: VoiceApiConfig, stream: boo
         // The uploaded reference selects the voice; a stale catalog ID must not override it.
         model: config.model?.trim(), input: text, voice: reference ? "default" : config.defaultVoice?.trim() || "default",
         stream, response_format: stream ? "pcm" : "wav",
+        ...(stream && config.qwenPcmProtocol === "vllm-omni" ? { stream_format: "audio" } : {}),
         ...(reference ? {
             task_type: "Base", ref_audio: reference,
             x_vector_only_mode: !transcript,

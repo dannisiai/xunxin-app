@@ -317,7 +317,7 @@
       return transition;
     }
     async function revalidate() {
-      if (!nativeFetch || !isActive() || parentRuntime) return;
+      if (accountId === "local_user" || !nativeFetch || !isActive() || parentRuntime) return;
       var checkController = new win.AbortController();
       var checkTimer = win.setTimeout(function () { checkController.abort(); }, 15000);
       try {

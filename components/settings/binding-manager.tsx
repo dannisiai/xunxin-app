@@ -62,7 +62,6 @@ import {
   ensureSettingsStorageHydrated,
 } from "@/lib/settings-storage";
 import { hydrateKvDb } from "@/lib/kv-db";
-import { cloudAccountConfig } from "@/lib/cloud-account";
 
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
@@ -185,7 +184,7 @@ export function BindingManager() {
             const s = { ...slot };
             let changed = false;
             if (s.apiConfigId && !validSets.api.has(s.apiConfigId)) { s.apiConfigId = undefined; changed = true; }
-            if (s.voiceConfigId && !validSets.voice.has(s.voiceConfigId) && !cloudAccountConfig()) { s.voiceConfigId = undefined; changed = true; }
+            if (s.voiceConfigId && !validSets.voice.has(s.voiceConfigId)) { s.voiceConfigId = undefined; changed = true; }
             if (s.presetId && !validSets.preset.has(s.presetId)) { s.presetId = undefined; changed = true; }
             if (s.userIdentityId && !validSets.identity.has(s.userIdentityId)) { s.userIdentityId = undefined; changed = true; }
             if (s.worldBookIds) {
@@ -579,7 +578,7 @@ export function BindingManager() {
         onOpenField: (field: BindingField) => void,
         options?: { includeRegex?: boolean },
     ) => {
-        const primaryFields: BindingField[] = cloudAccountConfig() ? ["apiConfigId"] : ["apiConfigId", "voiceConfigId"];
+        const primaryFields: BindingField[] = ["apiConfigId", "voiceConfigId"];
         const compactFields: BindingField[] = options?.includeRegex === false
             ? ["presetId", "worldBookIds"]
             : ["presetId", "worldBookIds", "regexIds"];

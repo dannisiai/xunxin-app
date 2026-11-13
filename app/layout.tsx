@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { headers } from "next/headers";
 import Script from "next/script";
-import { getAccountForDocument } from "@/lib/server/account-auth";
 
 import { CSSImportEnhancer } from "@/components/css-import-enhancer";
 import { DeviceAdaptationProvider } from "@/components/device-adaptation-provider";
@@ -27,10 +25,8 @@ export default async function RootLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
-  const requestHeaders = new Headers(await headers());
-  const account = await getAccountForDocument(new Request("http://localhost/", { headers: requestHeaders })).catch(() => null);
   return (
-    <html lang="zh-CN" data-account-storage-scope={account?.id || ""}>
+    <html lang="zh-CN" data-account-storage-scope="local_user">
       <head>
         <Script src="/account-storage-bootstrap.js" strategy="beforeInteractive" />
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />

@@ -10,8 +10,6 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 import { determineBaseUrl, simpleLLMCall } from "@/lib/api-helpers";
-import { useAccount } from "@/lib/account-context";
-import { CloudApiSettings } from "./cloud-api-settings";
 
 /** Remove only the untouched example created by older versions. Keep user-edited plans. */
 function isUnusedLegacyDefault(config: ApiConfig): boolean {
@@ -34,8 +32,7 @@ function getNativeToolProtocolLabel(config: ApiConfig): string {
 }
 
 export function ApiSettings() {
-    const { account } = useAccount();
-    return account.id.startsWith("sub2api_") ? <CloudApiSettings key={account.id} /> : <ManualApiSettings />;
+    return <ManualApiSettings />;
 }
 
 function ManualApiSettings() {

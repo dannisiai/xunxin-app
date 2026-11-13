@@ -3,7 +3,6 @@ import crypto from "crypto";
 import { ACCOUNT_SESSION_COOKIE as SHARED_ACCOUNT_SESSION_COOKIE } from "../account-cookie-constants";
 import { isSelfHostedModeEnabled } from "../self-hosting";
 import { encodeSupabaseFilter, supabaseRestFetch } from "./supabase-rest";
-import { getSub2ApiAccount, isSub2ApiAuthEnabled } from "./sub2api-auth";
 
 export const ACCOUNT_SESSION_COOKIE = SHARED_ACCOUNT_SESSION_COOKIE;
 export const ACCOUNT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -48,7 +47,6 @@ export async function deleteSessionToken(token: string): Promise<void> { if (!to
 const SELF_HOSTED_ACCOUNT: AppAccount = { id: "local_user", username: "local_user", displayName: "本地用户", status: "active" };
 function isMissingCurrentAccountRpc(error: string): boolean { return /app_get_current_account|PGRST202|Could not find the function|schema cache|does not exist/i.test(error); }
 async function resolveCurrentAccount(request: Request): Promise<AppAccount | null> {
-  if (isSub2ApiAuthEnabled()) return getSub2ApiAccount(request, true);
   if (isSelfHostedModeEnabled()) return { ...SELF_HOSTED_ACCOUNT };
   const token = readCookie(request, ACCOUNT_SESSION_COOKIE); if (!token) return null;
   const tokenHash = hashSessionToken(token); const now = new Date(); const nowIso = now.toISOString();

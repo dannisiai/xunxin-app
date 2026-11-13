@@ -16,9 +16,7 @@ import type {
   PromptOrderEntry,
 } from "./settings-types";
 import type { UserIdentity } from "@/lib/settings-types";
-import { bindCloudAccount, cloudAccountConfig, saveCloudAccountModel } from "./cloud-account";
 import { loadActiveAccountId } from "./account-client";
-import { loadCloudVoiceSettings, saveCloudVoiceConfigs } from "./cloud-voice";
 import { isUnusedLegacyVoicePreset, migrateLegacyVoiceConfig } from "./voice-mode";
 import { createBuiltinPreset, BUILTIN_PRESET_VERSION } from "./builtin-preset";
 import {
@@ -654,8 +652,6 @@ function normalizeApiConfig(config: LegacyApiConfig): ApiConfig {
 
 export function loadApiConfigs(): ApiConfig[] {
     if (typeof window === "undefined") return [];
-    const cloud = cloudAccountConfig();
-    if (cloud) return [cloud];
     try {
         const raw = kvGet(API_CONFIGS_KEY);
         if (!raw) return [];
@@ -676,12 +672,6 @@ export function loadApiConfigs(): ApiConfig[] {
 
 export function saveApiConfigs(configs: ApiConfig[]): void {
     if (typeof window === "undefined") return;
-    const cloud = cloudAccountConfig();
-    if (cloud) {
-        const config = configs.find(item => item.id === cloud.id);
-        if (config) saveCloudAccountModel(config.defaultModel);
-        return;
-    }
     kvSet(API_CONFIGS_KEY, JSON.stringify(configs.map(normalizeApiConfig)));
     kvSet(API_VISION_DEFAULT_MIGRATION_KEY, "1");
 }
@@ -690,10 +680,6 @@ export function saveApiConfigs(configs: ApiConfig[]): void {
 
 export function loadVoiceConfigs(accountId = loadActiveAccountId()): VoiceApiConfig[] {
     if (typeof window === "undefined") return [];
-    if (cloudAccountConfig(accountId)) {
-        const voice = loadCloudVoiceSettings(accountId);
-        return voice.enabled ? voice.configs : [];
-    }
     try {
         const raw = kvGet(VOICE_CONFIGS_KEY);
         if (!raw) return [];
@@ -705,10 +691,6 @@ export function loadVoiceConfigs(accountId = loadActiveAccountId()): VoiceApiCon
 
 export function saveVoiceConfigs(configs: VoiceApiConfig[], accountId = loadActiveAccountId()): void {
     if (typeof window === "undefined") return;
-    if (cloudAccountConfig(accountId)) {
-        saveCloudVoiceConfigs(configs, accountId);
-        return;
-    }
     kvSet(VOICE_CONFIGS_KEY, JSON.stringify(configs.filter(config => !isUnusedLegacyVoicePreset(config)).map(migrateLegacyVoiceConfig)));
 }
 
@@ -954,7 +936,7 @@ export function saveBindingConfig(config: BindingConfig, notify: boolean = true)
 }
 
 export function loadBindingConfig(): BindingConfig {
-    return bindCloudAccount(readBindingConfig());
+    return readBindingConfig();
 }
 
 /**

@@ -8,14 +8,13 @@ const path = require("node:path");
 const secret = fs.readFileSync(process.argv[2], "utf8").trim();
 if (!/^[a-f0-9]{64}$/.test(secret)) throw new Error("Invalid local server secret");
 process.env.NODE_ENV = "production";
-process.env.NEXT_PUBLIC_SELF_HOSTED_MODE = "false";
-process.env.ACCOUNT_AUTH_PROVIDER = "sub2api";
-process.env.SUB2API_BASE_URL = "https://xunxin.shop";
+process.env.NEXT_PUBLIC_SELF_HOSTED_MODE = "true";
+delete process.env.ACCOUNT_AUTH_PROVIDER;
+delete process.env.SUB2API_BASE_URL;
 process.env.XUNXIN_LOCAL_RUNTIME = "1";
 // Each installation has its own persistent session-encryption key. No server
 // administrator secret or model credential is bundled in the APK.
 process.env.ACCOUNT_GATE_SECRET = crypto.createHmac("sha256", secret).update("xunxin-account-session-v1").digest("hex");
-process.env.SUB2API_SESSION_DIR = path.join(path.dirname(process.argv[2]), "sub2api-sessions");
 process.env.HOSTNAME = "127.0.0.1";
 process.env.PORT = "18471";
 process.env.NEXT_TELEMETRY_DISABLED = "1";

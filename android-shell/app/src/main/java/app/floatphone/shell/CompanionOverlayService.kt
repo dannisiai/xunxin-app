@@ -96,6 +96,7 @@ class CompanionOverlayService : Service() {
     private var voiceControls: LinearLayout? = null
     private var voicePlayButton: Button? = null
     private var voiceStopButton: Button? = null
+    private var voiceStatus: TextView? = null
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) stopVoice()
@@ -119,7 +120,9 @@ class CompanionOverlayService : Service() {
             { message ->
                 if (!destroyed) {
                     dispatchVoiceStop()
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    if (compactCompanion() && panel?.visibility != View.VISIBLE) {
+                        showNotice("语音：$message", 12_000L)
+                    }
                 }
             },
             { playing -> updatePlaybackForeground(playing) })
@@ -178,7 +181,9 @@ class CompanionOverlayService : Service() {
 
     private fun appName() = if (appId == "douyin") "抖音" else "小红书"
     private fun compactCompanion() = appId == "douyin"
-    private fun bubbleSize() = dp(72)
+    private fun bubbleSize() = dp(56)
+    private fun panelWidth() = dp(300)
+    private fun panelHeight() = dp(390)
     private fun dp(value: Int) = (value * overlayUiContext.resources.displayMetrics.density).toInt()
     private fun background(color: Int, radius: Float) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius.toInt()).toFloat() }
 
@@ -195,7 +200,7 @@ class CompanionOverlayService : Service() {
         }
         initial = TextView(overlayUiContext).apply {
             text = characterName.trim().ifBlank { "AI 伴侣" }
-            textSize = if (characterName.length <= 2) 24f else 14f
+            textSize = if (characterName.length <= 2) 18f else 12f
             gravity = Gravity.CENTER
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
@@ -335,7 +340,7 @@ class CompanionOverlayService : Service() {
         noticeDismiss?.let { handler.removeCallbacks(it) }; noticeDismiss = null
         if (notice == null) {
             val root = FrameLayout(overlayUiContext).apply {
-                setPadding(dp(10), dp(10), dp(10), dp(10))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
                 setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                 background = noticeBackground()
                 setOnClickListener { hideNotice() }
@@ -349,7 +354,7 @@ class CompanionOverlayService : Service() {
             noticeLabel = TextView(overlayUiContext).apply {
                 textSize = 12f
                 setTextColor(Color.rgb(86, 57, 49))
-                setPadding(dp(14), dp(8), dp(14), dp(8))
+                setPadding(dp(10), dp(6), dp(10), dp(6))
                 includeFontPadding = false
                 gravity = Gravity.CENTER
                 maxLines = 4
@@ -357,10 +362,10 @@ class CompanionOverlayService : Service() {
             }
             root.addView(noticeLabel, FrameLayout.LayoutParams(-1, -2))
             noticeDots = ThinkingDotsView(overlayUiContext).apply { visibility = View.GONE }
-            root.addView(noticeDots, FrameLayout.LayoutParams(-1, dp(34)))
+            root.addView(noticeDots, FrameLayout.LayoutParams(-1, dp(28)))
             notice = root
             setNoticeMessage(message)
-            val params = WindowManager.LayoutParams(dp(240), -2, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            val params = WindowManager.LayoutParams(dp(200), -2, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                     or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
                 gravity = Gravity.TOP or Gravity.LEFT
@@ -400,7 +405,7 @@ class CompanionOverlayService : Service() {
         var right = segment.right - margin
         val leftSpace = if (anchor != null) anchor.x - dp(4) - left else 0
         val rightSpace = if (anchor != null) right - anchor.x - anchor.width - dp(4) else 0
-        val beside = anchor != null && maxOf(leftSpace, rightSpace) >= dp(120)
+        val beside = anchor != null && maxOf(leftSpace, rightSpace) >= dp(104)
         if (beside && anchor != null) {
             if (leftSpace >= rightSpace) right = anchor.x - dp(4)
             else left = anchor.x + anchor.width + dp(4)
@@ -409,9 +414,9 @@ class CompanionOverlayService : Service() {
         val label = noticeLabel
         val firstLineWidth = if (label == null) 0 else label.text.toString().lineSequence()
             .map { label.paint.measureText(it) }.maxOrNull()?.toInt() ?: 0
-        params.width = minOf(availableWidth, dp(280), maxOf(dp(120), firstLineWidth + dp(48)))
+        params.width = minOf(availableWidth, dp(220), maxOf(dp(104), firstLineWidth + dp(36)))
         root.measure(View.MeasureSpec.makeMeasureSpec(params.width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(maxOf(1, minOf(dp(160), segment.height())), View.MeasureSpec.AT_MOST))
+            View.MeasureSpec.makeMeasureSpec(maxOf(1, minOf(dp(128), segment.height())), View.MeasureSpec.AT_MOST))
         params.height = maxOf(1, root.measuredHeight)
         params.x = (segment.centerX() - params.width / 2).coerceIn(left, maxOf(left, right - params.width))
         val centerY = anchor?.let { it.y + it.height / 2 } ?: segment.centerY()
@@ -480,6 +485,13 @@ class CompanionOverlayService : Service() {
         voiceControls?.addView(voicePlayButton, LinearLayout.LayoutParams(0, dp(44), 1f))
         voiceControls?.addView(voiceStopButton, LinearLayout.LayoutParams(0, dp(44), 1f))
         root.addView(voiceControls)
+        voiceStatus = TextView(overlayUiContext).apply {
+            textSize = 12f
+            setTextColor(Color.rgb(86, 57, 49))
+            setPadding(dp(4), dp(2), dp(4), dp(6))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        root.addView(voiceStatus)
         updateVoiceControls()
         val row = LinearLayout(overlayUiContext).apply { gravity = Gravity.CENTER_VERTICAL }
         input = EditText(overlayUiContext).apply { hint = "想跟他说什么…"; textSize = 14f; maxLines = 3; setTextColor(Color.rgb(64, 48, 60)) }
@@ -491,7 +503,7 @@ class CompanionOverlayService : Service() {
         row.addView(sendButton)
         root.addView(row)
         val params = WindowManager.LayoutParams(
-            dp(340), dp(430), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            panelWidth(), panelHeight(), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.LEFT
@@ -576,8 +588,8 @@ class CompanionOverlayService : Service() {
             else safeSegments().maxByOrNull { it.width().toLong() * it.height() }!!
         val margin = minOf(dp(12), minOf(segment.width(), segment.height()) / 8)
         params.gravity = Gravity.TOP or Gravity.LEFT
-        params.width = minOf(dp(340), maxOf(1, segment.width() - margin * 2))
-        params.height = minOf(dp(430), maxOf(1, segment.height() - margin * 2))
+        params.width = minOf(panelWidth(), maxOf(1, segment.width() - margin * 2))
+        params.height = minOf(panelHeight(), maxOf(1, segment.height() - margin * 2))
         if (panelMovedByUser) {
             params.x = params.x.coerceIn(segment.left + margin, maxOf(segment.left + margin, segment.right - margin - params.width))
             params.y = params.y.coerceIn(segment.top + margin, maxOf(segment.top + margin, segment.bottom - margin - params.height))
@@ -629,9 +641,9 @@ class CompanionOverlayService : Service() {
             params.height = bubbleSize()
         }
         if (compactCompanion()) {
-            notice?.setPadding(dp(10), dp(10), dp(10), dp(10))
-            noticeLabel?.setPadding(dp(14), dp(8), dp(14), dp(8))
-            noticeDots?.let { dots -> dots.layoutParams = dots.layoutParams.apply { height = dp(34) }; dots.invalidate() }
+            notice?.setPadding(dp(8), dp(8), dp(8), dp(8))
+            noticeLabel?.setPadding(dp(10), dp(6), dp(10), dp(6))
+            noticeDots?.let { dots -> dots.layoutParams = dots.layoutParams.apply { height = dp(28) }; dots.invalidate() }
         }
         foldSnapshot = foldSnapshot?.inFrame(overlayDisplayFrame(windows))
         imeBottom = 0
@@ -774,15 +786,28 @@ class CompanionOverlayService : Service() {
     private fun updateVoiceControls() {
         if (destroyed || !::voicePlayer.isInitialized) return
         voiceControls?.visibility = if (voiceEnabled) View.VISIBLE else View.GONE
+        val state = voicePlayer.state
+        val active = state == "loading" || state == "playing" || state == "paused"
+        val status = when (state) {
+            "paused" -> "语音已暂停，音频焦点恢复后会继续播放。"
+            "error" -> voicePlayer.errorMessage.orEmpty()
+            else -> ""
+        }
+        voiceStatus?.apply {
+            text = status
+            visibility = if (voiceEnabled && status.isNotBlank()) View.VISIBLE else View.GONE
+        }
         voicePlayButton?.apply {
             text = when {
-                voicePlayer.state == "loading" -> "正在准备语音…"
+                state == "loading" -> "正在准备语音…"
+                state == "paused" -> "语音已暂停"
+                state == "playing" -> "正在播放语音…"
                 voicePlayer.hasAudio -> "重播语音"
                 else -> "重试语音"
             }
-            isEnabled = voicePlayer.hasReply && voicePlayer.state != "loading" && voicePlayer.state != "playing"
+            isEnabled = voicePlayer.hasReply && !active
         }
-        voiceStopButton?.isEnabled = voicePlayer.state == "loading" || voicePlayer.state == "playing"
+        voiceStopButton?.isEnabled = active
     }
 
     private fun dispatchVoiceStop() {
@@ -828,7 +853,7 @@ class CompanionOverlayService : Service() {
                 builder.addAction(0, "停止语音", stopAudio)
             }
             foregroundNotification = builder.build()
-            updatePlaybackForeground(voicePlayer.state == "playing")
+            updatePlaybackForeground(voicePlayer.state == "playing" || voicePlayer.state == "paused")
         }
         updateVoiceControls()
     }

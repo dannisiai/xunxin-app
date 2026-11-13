@@ -58,7 +58,7 @@ function rewriteToHome(request: NextRequest): NextResponse {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (isSelfHostedModeEnabled() && process.env.ACCOUNT_AUTH_PROVIDER?.trim().toLowerCase() !== "sub2api") {
+  if (isSelfHostedModeEnabled()) {
     return NextResponse.next();
   }
 

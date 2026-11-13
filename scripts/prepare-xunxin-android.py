@@ -14,7 +14,7 @@ assets = root / "android-shell" / "app" / "build" / "generated" / "xunxin-assets
 if not (standalone / "server.js").is_file() or not static.is_dir():
     raise SystemExit("Next.js standalone build is missing")
 subprocess.run(
-    ["node", str(root / "scripts" / "check-app-popup-bundle.cjs"), str(static), str(standalone / ".next" / "server")],
+    ["node", str(root / "scripts" / "check-app-popup-bundle.cjs"), str(static)],
     cwd=root,
     check=True,
 )

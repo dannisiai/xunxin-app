@@ -1,5 +1,4 @@
 import type { VoiceApiConfig } from "./settings-types";
-import { cloudAccountConfig } from "./cloud-account";
 
 /** User-visible failures must never contain configured keys or token-bearing URLs. */
 export function voiceCallError(error: unknown, config?: VoiceApiConfig | null, extraSecrets: string[] = []): string {
@@ -19,7 +18,6 @@ export function voiceCallError(error: unknown, config?: VoiceApiConfig | null, e
 }
 
 export function voiceCallConfigurationHint(config: VoiceApiConfig | null): string {
-    if (!config && cloudAccountConfig()) return "当前账户暂未开通统一语音服务，可先使用文字聊天。";
     if (!config) return "当前角色未绑定语音 API，暂时只能使用文字。请在设置的绑定管理中为该角色绑定语音方案。";
     if (!config.enableTTS) return "当前语音方案已关闭语音输出，对方回复不会播放声音。";
     return "";

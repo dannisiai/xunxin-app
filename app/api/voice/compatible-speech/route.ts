@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import type { VoiceApiConfig } from "@/lib/settings-types";
 import { buildCompatibleVoiceUrl, compatibleSpeechBody } from "@/lib/voice-api";
-import { isQwenTts, qwenSpeechBody } from "@/lib/qwen-tts";
+import { isQwenTts, qwenSpeechBody, supportsQwenPcmStream } from "@/lib/qwen-tts";
 import { voiceDeadline } from "@/lib/server/voice-provider";
+import { SPEECH_SYNTHESIS_TIMEOUT_MS } from "@/lib/tts-audio-stream";
 import { isDashscopeTts, requestDashscopeAudio } from "@/lib/dashscope-tts";
 
 export const runtime = "nodejs";
@@ -11,8 +12,8 @@ export const maxDuration = 300;
 const MAX_REQUEST = 30 * 1024 * 1024;
 const MAX_AUDIO = 40 * 1024 * 1024;
 
-function reply(error: string, status: number) {
-    return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
+function reply(error: string, status: number, headers?: Record<string, string>) {
+    return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store", ...headers } });
 }
 function record(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -55,19 +56,21 @@ export async function POST(request: Request) {
     // This handler is never a public hosting proxy. Android bootstrap binds to
     // loopback and requires the installation cookie before Next can serve it.
     if (process.env.XUNXIN_LOCAL_RUNTIME !== "1") return reply("此语音连接方式仅用于安卓 App", 404);
-    const deadline = voiceDeadline(request, 240_000);
+    const deadline = voiceDeadline(request, SPEECH_SYNTHESIS_TIMEOUT_MS);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
         let config: VoiceApiConfig, text: string, url: string, stream: boolean, qwen: boolean, speechBody: object;
         try {
             const body = await requestBody(request);
             const raw = record(body.config);
+            const pcmProtocol = field(raw, "qwenPcmProtocol", 20);
             text = field(body, "text", 20_000);
             config = {
                 id: "", provider: field(raw, "provider", 40), baseUrl: field(raw, "baseUrl", 2048),
                 apiKey: field(raw, "apiKey", 8192), model: field(raw, "model", 400),
                 defaultVoice: field(raw, "defaultVoice", 512), referenceAudio: field(raw, "referenceAudio", 28 * 1024 * 1024),
                 referenceText: field(raw, "referenceText", 20_000), enableTTS: true, enableSTT: false,
+                qwenPcmProtocol: pcmProtocol === "raw-pcm" || pcmProtocol === "vllm-omni" ? pcmProtocol : undefined,
             };
             if (!text || typeof body.stream !== "boolean" || !["Custom", "OpenAI"].includes(config.provider)) {
                 throw new Error("语音配置无效，请检查服务商和接口地址");
@@ -76,7 +79,7 @@ export async function POST(request: Request) {
             if (config.provider === "OpenAI" && !config.apiKey) throw new Error("OpenAI API Key 未配置");
             stream = body.stream;
             qwen = isQwenTts(config);
-            if (stream && !qwen) throw new Error("当前语音接口未启用 Qwen 流式协议");
+            if (stream && !supportsQwenPcmStream(config)) throw new Error("当前语音方案未启用 PCM 流式协议。");
             speechBody = qwen ? qwenSpeechBody(text, config, stream) : compatibleSpeechBody(text, config);
             url = buildCompatibleVoiceUrl(config.baseUrl || (config.provider === "OpenAI" ? "https://api.openai.com/v1" : ""), "speech");
         } catch (error) {
@@ -99,9 +102,13 @@ export async function POST(request: Request) {
                 : upstream.status === 429 ? "请检查接口配额或稍后重试"
                 : upstream.status < 500 ? "请检查模型 ID、音色及参考音频格式"
                 : "语音服务暂时无法处理请求";
-            return reply(`语音接口返回 HTTP ${upstream.status}，${hint}`, 502);
+            return reply(`语音接口返回 HTTP ${upstream.status}，${hint}`, 502, { "X-Speech-Upstream-Status": String(upstream.status) });
         }
         const mime = upstream.headers.get("content-type") || "";
+        if (/^text\/event-stream\b/i.test(mime)) {
+            await upstream.body?.cancel(); deadline.dispose();
+            return reply("语音接口返回 SSE，请检查所选语音协议。", 502, { "X-Speech-Error": "unexpected-sse" });
+        }
         if (!/^(audio\/|application\/octet-stream\b)/i.test(mime) || !upstream.body) {
             await upstream.body?.cancel(); deadline.dispose();
             return reply("语音接口未返回音频，请检查接口协议和克隆配置", 502);
@@ -138,8 +145,10 @@ export async function POST(request: Request) {
             },
         });
         const headers = new Headers({ "Content-Type": mime, "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no" });
-        const rate = upstream.headers.get("x-sample-rate");
-        if (rate && /^\d+$/.test(rate)) headers.set("X-Sample-Rate", rate);
+        for (const name of ["x-sample-rate", "x-audio-sample-rate", "x-audio-channels"]) {
+            const value = upstream.headers.get(name);
+            if (value && /^\d{1,6}$/.test(value)) headers.set(name, value);
+        }
         return new Response(audio, { headers });
     } catch (error) {
         await reader?.cancel().catch(() => {}); reader?.releaseLock();

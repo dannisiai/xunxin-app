@@ -10,21 +10,17 @@ import subprocess
 from urllib.parse import urlsplit
 
 
-def https_url(value):
+JAPAN_OTA_BASE = "https://xunxin.shop/downloads/android"
+JAPAN_OTA_MANIFEST = f"{JAPAN_OTA_BASE}/version.json"
+
+
+def japan_apk_url(value):
     url = urlsplit(value)
-    if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
-        raise ValueError("apkUrl must be an HTTPS URL without credentials or fragments")
+    if (url.scheme != "https" or url.hostname != "xunxin.shop" or url.port not in (None, 443)
+            or url.username is not None or url.password is not None or url.fragment or url.query
+            or not re.fullmatch(r"/downloads/android/xunxin-[A-Za-z0-9][A-Za-z0-9._-]*-[1-9][0-9]*\.apk", url.path)):
+        raise ValueError("apkUrl must be a versioned APK on the Japan update server")
     return value
-
-
-def preferred_apk_url(value):
-    """Only public GitHub release assets use the fixed free download accelerator."""
-    prefix = "https://gh-proxy.com/"
-    direct = value.removeprefix(prefix)
-    url = urlsplit(direct)
-    if url.scheme == "https" and url.netloc == "github.com" and re.fullmatch(r"/[^/]+/[^/]+/releases/download/[^/]+/[^/]+", url.path):
-        return prefix + direct, direct
-    return value, value
 
 
 def tool(name, explicit):
@@ -49,7 +45,7 @@ def output(command):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apk", type=Path, required=True)
-    parser.add_argument("--apk-url", type=https_url, required=True)
+    parser.add_argument("--apk-url", type=japan_apk_url, help="Defaults to the Japan server URL derived from the signed APK version")
     parser.add_argument("--notes-file", type=Path, required=True)
     parser.add_argument("--download-notes-output", type=Path)
     parser.add_argument("--output", type=Path, required=True)
@@ -77,6 +73,9 @@ def main():
     code, name = int(package[2]), package[3]
     if not 0 < code <= 2147483647 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,79}", name):
         raise ValueError("Invalid APK version")
+    apk_url = f"{JAPAN_OTA_BASE}/xunxin-{name}-{code}.apk"
+    if args.apk_url is not None and args.apk_url != apk_url:
+        parser.error(f"--apk-url must match the signed APK version: {apk_url}")
     notes = args.notes_file.read_text(encoding="utf-8-sig")
     if len(notes.encode("utf-16-le")) // 2 > 20000:
         raise ValueError("Release notes must not exceed 20000 UTF-16 code units")
@@ -84,8 +83,7 @@ def main():
     with args.apk.open("rb") as apk:
         for chunk in iter(lambda: apk.read(1024 * 1024), b""):
             digest.update(chunk)
-    preferred, original = preferred_apk_url(args.apk_url)
-    manifest = {"versionCode": code, "versionName": name, "apkUrl": preferred,
+    manifest = {"versionCode": code, "versionName": name, "apkUrl": apk_url,
                 "sha256": digest.hexdigest(), "forceUpdate": args.force_update, "releaseNotes": notes}
     content = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     if len(content.encode("utf-8")) > 65536:
@@ -96,10 +94,7 @@ def main():
     temporary.replace(args.output)
     if args.download_notes_output:
         args.download_notes_output.parent.mkdir(parents=True, exist_ok=True)
-        links = f"[加速下载安装包（默认）]({preferred})"
-        if original != preferred:
-            links += f" · [GitHub 原始下载（备用）]({original})"
-        args.download_notes_output.write_text(links + "\n\n" + notes.rstrip() + "\n", encoding="utf-8")
+        args.download_notes_output.write_text(f"[官网下载 APK]({apk_url})\n\n" + notes.rstrip() + "\n", encoding="utf-8")
     print(f"Generated {args.output}: {name} ({code}), SHA-256 {digest.hexdigest()}")
 
 
