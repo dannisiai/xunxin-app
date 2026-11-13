@@ -63,7 +63,7 @@ jobs:
           temp = Path(os.environ['RUNNER_TEMP'])
           with urllib.request.urlopen('https://xunxin.shop/downloads/android/version.json', timeout=20) as response:
               previous = json.loads(response.read(65537))
-          code = max(28, int(previous['versionCode']) + 1)
+          code = max(29, int(previous['versionCode']) + 1)
           version = os.environ.get('REQUESTED_VERSION') or json.loads(Path('package.json').read_text())['version']
           if previous and not os.environ.get('REQUESTED_VERSION'):
               old = tuple(map(int, previous['versionName'].split('.')))
