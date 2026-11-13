@@ -13,9 +13,12 @@ import urllib.request
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
+PUBLISHER_USER_AGENT = 'Mozilla/5.0 (compatible; XunxinReleasePublisher/1.0)'
+
 
 def read_public(url):
-    with urllib.request.urlopen(url, timeout=20) as response:
+    request = urllib.request.Request(url, headers={'User-Agent': PUBLISHER_USER_AGENT})
+    with urllib.request.urlopen(request, timeout=20) as response:
         data = response.read(65537)
         if len(data) > 65536:
             raise SystemExit('Public manifest exceeds 64 KiB')
@@ -90,7 +93,7 @@ def main():
 
     upload(args.apk, key, 'application/vnd.android.package-archive', 'public,max-age=31536000,immutable',
            '--content-disposition', f'attachment; filename="xunxin-{name}.apk"')
-    probe = urllib.request.Request(manifest['apkUrl'], headers={'Range': 'bytes=0-3', 'Accept-Encoding': 'identity'})
+    probe = urllib.request.Request(manifest['apkUrl'], headers={'Range': 'bytes=0-3', 'Accept-Encoding': 'identity', 'User-Agent': PUBLISHER_USER_AGENT})
     with urllib.request.urlopen(probe, timeout=20) as response:
         if (response.status != 206 or response.headers.get('Content-Range') != f'bytes 0-3/{size}'
                 or response.read(4) != b'PK\x03\x04'):
