@@ -82,7 +82,7 @@ function parseModels(payload: unknown, eleven = false): VoiceCatalogEntry[] {
         if (typeof value === "string") return [{ id: text(value), name: text(value) }];
         const item = record(value);
         if (eleven && item.can_do_text_to_speech === false) return [];
-        const id = text(item.id ?? item.model_id ?? item.model);
+        const id = text(item.id ?? item.model_id ?? item.model ?? item.name);
         return id ? [{ id, name: text(item.name ?? item.display_name) || id }] : [];
     }));
 }

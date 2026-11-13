@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { VoiceApiConfig } from "@/lib/settings-types";
 import { readMiniCPMReference } from "@/lib/minicpm-pcm";
+import { isAndroidVoiceShell } from "@/lib/reference-audio";
 import { Input } from "@/components/ui/form";
 
 export function MiniCPMVoiceFields({ config, onChange, showConnectionFields = true }: { config: VoiceApiConfig; onChange: (patch: Partial<VoiceApiConfig>) => void; showConnectionFields?: boolean }) {
@@ -21,7 +22,7 @@ export function MiniCPMVoiceFields({ config, onChange, showConnectionFields = tr
         <p className="menu-desc">模型由你的网关加载，不使用 OpenAI 的模型名称、Voice ID 或 /models 接口。官方协议没有通用 API Key 字段，需要鉴权的网关应提供可直接连接的已授权 WS(S) 地址。</p>
         </>}
         <label className="menu-desc">参考音色（可选，不超过 10 秒、8 MB）</label>
-        <input type="file" accept="audio/*" disabled={busy} className="ui-input" onChange={async event => {
+        <input type="file" accept={isAndroidVoiceShell() ? undefined : "audio/*,.wav"} disabled={busy} className="ui-input" onChange={async event => {
             const file = event.target.files?.[0]; event.target.value = "";
             if (!file) return;
             const request = ++version.current; setBusy(true); setError("");

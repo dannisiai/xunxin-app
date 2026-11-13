@@ -6,15 +6,13 @@ import { Input } from "@/components/ui/form";
 import type { VoiceApiConfig } from "@/lib/settings-types";
 import { MiniCPMVoiceFields } from "./minicpm-voice-fields";
 import { isMiniCPMVoiceConfig } from "@/lib/voice-mode";
-import { fetchModelsFromEndpoint } from "@/lib/voice-api";
 import { Alert } from "@/components/ui/feedback";
+import { isDashscopeTts } from "@/lib/dashscope-tts";
 
-export function VoiceProviderFields({ config, onChange }: {
+export function VoiceProviderFields({ config, onChange, onFetch, onCancel, fetching, message, error }: {
     config: VoiceApiConfig; onChange: (patch: Partial<VoiceApiConfig>) => void;
-    onFetch?: () => void; onCancel?: () => void; fetching?: boolean; message?: string;
+    onFetch: () => void; onCancel: () => void; fetching: boolean; message?: string; error?: string;
 }) {
-    const [isFetchingModels, setIsFetchingModels] = useState(false);
-    const [modelError, setModelError] = useState("");
     const [manualModelInput, setManualModelInput] = useState(false);
 
     if (isMiniCPMVoiceConfig(config)) {
@@ -30,28 +28,8 @@ export function VoiceProviderFields({ config, onChange }: {
         Custom: "https://your-service.example/v1",
     };
 
-    const handleFetchModels = async () => {
-        setIsFetchingModels(true);
-        setModelError("");
-        try {
-            const baseUrl = config.baseUrl || defaults[config.provider];
-            const models = await fetchModelsFromEndpoint(baseUrl, config.apiKey, config.provider);
-            onChange({
-                catalog: {
-                    models: models.map(id => ({ id, name: id })),
-                    voices: config.catalog?.voices || [],
-                    updatedAt: Date.now(),
-                },
-            });
-            setManualModelInput(false);
-        } catch (err: any) {
-            setModelError(err.message || "拉取模型列表失败");
-        } finally {
-            setIsFetchingModels(false);
-        }
-    };
-
     const cachedModels = config.catalog?.models || [];
+    const cachedVoices = config.catalog?.voices || [];
 
     return <>
         {config.provider !== "Minimax" && (
@@ -71,13 +49,12 @@ export function VoiceProviderFields({ config, onChange }: {
                     <label className="menu-desc ml-1">语音模型 (TTS Model)</label>
                     <button
                         type="button"
-                        onClick={handleFetchModels}
-                        disabled={isFetchingModels}
+                        onClick={fetching ? onCancel : onFetch}
                         className="inline-flex items-center gap-1 text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors py-0.5 px-1.5 rounded hover:bg-[var(--bg-muted)]"
-                        title="自动从服务商拉取可用模型列表"
+                        title={fetching ? "停止拉取" : "自动从服务商拉取可用模型列表"}
                     >
-                        <RefreshCw size={12} className={isFetchingModels ? "animate-spin" : ""} />
-                        <span>{isFetchingModels ? "正在拉取..." : "自动拉取模型"}</span>
+                        <RefreshCw size={12} className={fetching ? "animate-spin" : ""} />
+                        <span>{fetching ? "停止拉取" : "自动拉取模型"}</span>
                     </button>
                 </div>
 
@@ -95,6 +72,8 @@ export function VoiceProviderFields({ config, onChange }: {
                             className="ui-select flex-1"
                         >
                             <option value="">请选择已拉取的模型 ({cachedModels.length} 个)...</option>
+                            {config.model && !cachedModels.some(model => model.id === config.model) &&
+                                <option value={config.model}>{config.model}</option>}
                             {cachedModels.map(m => (
                                 <option key={m.id} value={m.id}>{m.name || m.id}</option>
                             ))}
@@ -130,15 +109,27 @@ export function VoiceProviderFields({ config, onChange }: {
                         )}
                     </div>
                 )}
-                {modelError && (
+                {message && <p className="menu-desc whitespace-pre-line" role="status">{message}</p>}
+                {error && (
                     <Alert variant="danger">
                         <AlertCircle size={14} />
-                        <span>{modelError}</span>
+                        <span>{error}</span>
                     </Alert>
                 )}
+            </div>
+        )}
+        {compatible && (!config.referenceAudio || isDashscopeTts(config)) && (
+            <div className="flex flex-col gap-1">
+                <label className="menu-desc ml-1" htmlFor={`voice-id-${config.id}`}>音色 ID（可选）</label>
+                <Input id={`voice-id-${config.id}`} value={config.defaultVoice || ""}
+                    list={cachedVoices.length ? `voice-options-${config.id}` : undefined}
+                    placeholder="按服务商要求填写，留空使用默认值"
+                    onChange={event => onChange({ defaultVoice: event.target.value })} />
+                {!!cachedVoices.length && <datalist id={`voice-options-${config.id}`}>
+                    {cachedVoices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
+                </datalist>}
             </div>
         )}
     </>;
 }
 
-export function VoiceCatalogSelect() { return null; }

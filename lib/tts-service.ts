@@ -2,56 +2,64 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
-import { buildCompatibleVoiceUrl, resolveCompatibleVoiceBaseUrl } from "./voice-api";
+import { buildCompatibleVoiceUrl, compatibleSpeechBody, resolveCompatibleVoiceBaseUrl } from "./voice-api";
 import { usesMiniCPMTts } from "./voice-mode";
 import { isQwenTts, qwenSpeechBody } from "./qwen-tts";
 import { fetchTtsResponse as fetchWithTimeout } from "./tts-request";
 import { playPcmResponse } from "./tts-pcm-player";
 import { isPcmAudioResponse } from "./tts-audio-stream";
+import { detectAudioMime, isAndroidVoiceShell } from "./reference-audio";
+import { isDashscopeTts, requestDashscopeAudio } from "./dashscope-tts";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
 type SpeechPlayback = { promise: Promise<void>; abort: () => void };
 let streamingPlaybackReservations = 0;
 
-async function requestQwenSpeech(text: string, config: VoiceApiConfig, stream: boolean, signal?: AbortSignal): Promise<Response> {
-    if (!isQwenTts(config)) throw new Error("当前语音接口未启用 Qwen 流式协议");
+async function requestCompatibleSpeech(text: string, config: VoiceApiConfig, stream: boolean, signal?: AbortSignal): Promise<Response> {
+    const qwen = isQwenTts(config);
+    if (stream && !qwen) throw new Error("当前语音接口未启用 Qwen 流式协议");
+    // Validate Base cloning before either a local relay or a direct generation request.
+    const speechBody = qwen ? qwenSpeechBody(text, config, stream) : compatibleSpeechBody(text, config);
     // The bundled Android runtime already has a cookie-protected loopback server.
     // Let it keep the TLS/stream connection instead of WebView cross-origin fetch.
-    const local = typeof window !== "undefined" && window.location.hostname === "localhost"
-        && window.location.port === "18471" && Boolean((window as Window & { AndroidShell?: unknown }).AndroidShell);
-    const response = await fetchWithTimeout(local ? "/api/voice/qwen-speech" : buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
+    const local = isAndroidVoiceShell() && window.location.hostname === "localhost" && window.location.port === "18471";
+    if (!local && isDashscopeTts(config)) return requestDashscopeAudio(text, config, fetchWithTimeout, signal);
+    const response = await fetchWithTimeout(local ? "/api/voice/compatible-speech" : buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
         method: "POST", signal,
         headers: { "Content-Type": "application/json", ...(!local && config.apiKey?.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) },
         body: JSON.stringify(local ? { text, stream, config: {
             provider: config.provider, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
             defaultVoice: config.defaultVoice, referenceAudio: config.referenceAudio, referenceText: config.referenceText,
-        } } : qwenSpeechBody(text, config, stream)),
-    }, 240_000);
+        } } : speechBody),
+    }, local || qwen ? 240_000 : 120_000);
     if (!response.ok) {
         const detail = local ? await response.json().catch(() => null) : null;
         if (!local) await response.body?.cancel();
-        throw new Error(typeof detail?.error === "string" ? detail.error : `Qwen TTS 请求失败（HTTP ${response.status}）`);
+        throw new Error(typeof detail?.error === "string" ? detail.error : `语音合成请求失败（HTTP ${response.status}）`);
     }
     return response;
 }
 
 /** A single streaming generation request, also consumed by the Android foreground overlay. */
 export function requestStreamingSpeech(text: string, config: VoiceApiConfig, signal: AbortSignal): Promise<Response> {
-    return requestQwenSpeech(text, config, true, signal);
+    return requestCompatibleSpeech(text, config, true, signal);
 }
 
-/** Qwen calls/preview stream PCM; cached voice messages can still use synthesizeSpeech. */
+/** Calls can stream PCM; previews can explicitly request a complete audio file. */
 export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
     signal?: AbortSignal;
     emotion?: string;
     playBlob?: (blob: Blob) => SpeechPlayback;
+    stream?: boolean;
+    reportPlaybackErrors?: boolean;
 }): SpeechPlayback {
     const controller = new AbortController();
     const signal = controller.signal;
     let playback: SpeechPlayback | null = null;
     let streamContext: AudioContext | null = null;
-    const streaming = isQwenTts(config);
+    const streaming = options?.stream !== false && isQwenTts(config);
+    const playBlob = options?.playBlob || ((blob: Blob) => playAudioBlobElement(blob, options?.reportPlaybackErrors));
     if (streaming) streamingPlaybackReservations++;
     const abort = () => { controller.abort(); playback?.abort(); };
     const external = options?.signal;
@@ -59,7 +67,7 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
     const promise = (async () => {
         signal.throwIfAborted();
         if (!text.trim()) return;
-        const context = streamContext = isQwenTts(config) ? getAudioContext() : null;
+        const context = streamContext = streaming ? getAudioContext() : null;
         // Check playback permission BEFORE sending a synthesis request. A media-element
         // fallback must never resubmit a stream that has already generated audio.
         if (context?.state === "suspended") {
@@ -88,12 +96,12 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
             const blob = await response.blob();
             signal.throwIfAborted();
             if (!blob.size) throw new Error("语音服务返回了空音频");
-            playback = (options?.playBlob || playAudioBlobViaMediaElement)(blob);
+            playback = playBlob(blob);
         } else {
             const blob = await synthesizeSpeech(text, config, { signal, emotion: options?.emotion });
             signal.throwIfAborted();
             if (!blob?.size) throw new Error("语音服务没有返回可播放的音频");
-            playback = (options?.playBlob || playAudioBlobViaMediaElement)(blob);
+            playback = playBlob(blob);
         }
         await playback.promise;
         signal.throwIfAborted();
@@ -258,83 +266,7 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig, signal?: A
     if (!custom && !apiKey) throw new Error("OpenAI API Key 未配置");
     if (custom && !config.model?.trim()) throw new Error("请填写自定义语音的合成模型 ID");
 
-    const baseUrl = resolveCompatibleVoiceBaseUrl(config);
-
-    if (baseUrl.includes(".aliyuncs.com") || baseUrl.includes("dashscope")) {
-        const urlObj = new URL(baseUrl);
-        const dashscopeUrl = "https://" + urlObj.host + "/api/v1/services/aigc/multimodal-generation/generation";
-        let model = config.model?.trim() || "qwen3-tts-flash";
-        if (model.endsWith("-realtime")) {
-            model = model.replace(/-realtime$/, "");
-        }
-        const validVoices = new Set(["Cherry", "Serena", "Ethan", "Chelsie", "Momo", "Vivian", "Moon", "Maia"]);
-        let voice = config.defaultVoice?.trim() || "Cherry";
-        if (!validVoices.has(voice) && !voice.startsWith("qwen-")) {
-            voice = "Cherry";
-        }
-
-        const dashscopeParams: Record<string, any> = { voice };
-        if (config.referenceAudio) {
-            dashscopeParams.reference_audio = config.referenceAudio;
-            if (config.referenceText) dashscopeParams.reference_text = config.referenceText;
-        }
-        const response = await fetchWithTimeout(dashscopeUrl, {
-            method: "POST", signal,
-            headers: {
-                ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                model,
-                input: { text },
-                parameters: dashscopeParams,
-            }),
-        });
-
-        if (!response.ok) {
-            const errText = await response.text().catch(() => "");
-            throw new Error("通义千问 (DashScope) TTS 请求失败 (" + response.status + "): " + errText);
-        }
-
-        const data = await response.json();
-        const audioUrl = data?.output?.audio?.url;
-        if (!audioUrl) {
-            throw new Error("通义千问 TTS 未返回音频地址: " + (data?.message || JSON.stringify(data)));
-        }
-
-        const secureAudioUrl = typeof audioUrl === "string" ? audioUrl.replace(/^http:\/\//i, "https://") : audioUrl;
-        const audioRes = await fetchWithTimeout(secureAudioUrl, { method: "GET", signal });
-        if (!audioRes.ok) {
-            throw new Error("下载合成音频失败 (" + audioRes.status + ")");
-        }
-        const blob = await audioRes.blob();
-        if (!blob.size) throw new Error("语音合成接口返回了空音频");
-        return blob;
-    }
-    const response = isQwenTts(config) ? await requestQwenSpeech(text, config, false, signal) : await fetchWithTimeout(buildCompatibleVoiceUrl(baseUrl, "speech"), {
-        method: "POST", signal,
-        headers: {
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            model: config.model?.trim() || "tts-1",
-            input: text,
-            voice: config.defaultVoice?.trim() || "alloy",
-            response_format: "mp3",
-            ...(config.referenceAudio ? {
-                reference_audio: config.referenceAudio,
-                prompt_audio: config.referenceAudio,
-                prompt_text: config.referenceText,
-                reference_text: config.referenceText,
-            } : {}),
-        }),
-    });
-
-    if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`${custom ? "自定义" : "OpenAI"} TTS 请求失败 (${response.status}): ${errText}`);
-    }
+    const response = await requestCompatibleSpeech(text, config, false, signal);
 
     const contentType = (response.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
     if (contentType.includes("json") || contentType.startsWith("text/")) {
@@ -342,7 +274,9 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig, signal?: A
     }
     const blob = await response.blob();
     if (!blob.size) throw new Error("语音合成接口返回了空音频");
-    return new Blob([blob], { type: contentType.startsWith("audio/") ? contentType : "audio/mpeg" });
+    const detected = detectAudioMime(new Uint8Array(await blob.slice(0, 12).arrayBuffer()));
+    const mime = detected || (contentType.startsWith("audio/") ? contentType : "audio/mpeg");
+    return blob.type === mime ? blob : blob.slice(0, blob.size, mime);
 }
 
 // ── iOS audio playback that coexists with speech recognition ──────────
@@ -471,8 +405,10 @@ export function unlockAudioPlayback(): void {
     audio.muted = true;
     audio.src = url;
     const finish = () => {
-        try { audio.pause(); audio.currentTime = 0; } catch {}
-        audio.muted = false;
+        if (audio.src === url) {
+            try { audio.pause(); audio.currentTime = 0; } catch {}
+            audio.muted = false;
+        }
         URL.revokeObjectURL(url);
         _audioUnlocked = true;
     };
@@ -526,7 +462,7 @@ export function playAudioBlobViaMediaElement(blob: Blob): { promise: Promise<voi
     return playAudioBlobElement(blob);
 }
 
-function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () => void } {
+function playAudioBlobElement(blob: Blob, reportErrors = false): { promise: Promise<void>; abort: () => void } {
     const url = URL.createObjectURL(blob);
     const audio = getSharedAudio();
     audio.muted = false;
@@ -535,24 +471,31 @@ function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () =
 
     let settled = false;
     let resolveFn: () => void = () => {};
-    const finalize = () => {
+    let rejectFn: (error: Error) => void = () => {};
+    const finalize = (error?: Error) => {
         if (settled) return;
         settled = true;
         audio.onended = null;
         audio.onerror = null;
         URL.revokeObjectURL(url);
         try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch {}
-        resolveFn();
+        if (error && reportErrors) rejectFn(error);
+        else resolveFn();
     };
-    const promise = new Promise<void>((resolve) => {
+    const promise = new Promise<void>((resolve, reject) => {
         resolveFn = resolve;
-        audio.onended = finalize;
-        audio.onerror = finalize;
-        audio.play().catch(() => {
-            finalize();
-        });
+        rejectFn = reject;
+        audio.onended = () => finalize();
+        const cannotPlay = () => finalize(new Error("无法播放合成音频，请检查服务商返回的音频格式。"));
+        audio.onerror = cannotPlay;
+        try {
+            void audio.play().catch(error => {
+                if (error?.name === "NotAllowedError") finalize(new Error("系统阻止了音频播放，请重新点击试听。"));
+                else cannotPlay();
+            });
+        } catch { cannotPlay(); }
     });
-    return { promise, abort: finalize };
+    return { promise, abort: () => finalize() };
 }
 
 /**

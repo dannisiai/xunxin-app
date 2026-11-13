@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import type { VoiceApiConfig } from "@/lib/settings-types";
-import { buildCompatibleVoiceUrl, resolveCompatibleVoiceBaseUrl } from "@/lib/voice-api";
+import { buildCompatibleVoiceUrl, compatibleSpeechBody } from "@/lib/voice-api";
 import { isQwenTts, qwenSpeechBody } from "@/lib/qwen-tts";
 import { voiceDeadline } from "@/lib/server/voice-provider";
+import { isDashscopeTts, requestDashscopeAudio } from "@/lib/dashscope-tts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,9 +58,9 @@ export async function POST(request: Request) {
     const deadline = voiceDeadline(request, 240_000);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-        let body: Record<string, unknown>, config: VoiceApiConfig, text: string;
+        let config: VoiceApiConfig, text: string, url: string, stream: boolean, qwen: boolean, speechBody: object;
         try {
-            body = await requestBody(request);
+            const body = await requestBody(request);
             const raw = record(body.config);
             text = field(body, "text", 20_000);
             config = {
@@ -68,22 +69,37 @@ export async function POST(request: Request) {
                 defaultVoice: field(raw, "defaultVoice", 512), referenceAudio: field(raw, "referenceAudio", 28 * 1024 * 1024),
                 referenceText: field(raw, "referenceText", 20_000), enableTTS: true, enableSTT: false,
             };
-            if (!text || typeof body.stream !== "boolean" || !isQwenTts(config)) throw new Error("Qwen 语音配置无效，请检查模型和接口地址");
-            resolveCompatibleVoiceBaseUrl(config);
+            if (!text || typeof body.stream !== "boolean" || !["Custom", "OpenAI"].includes(config.provider)) {
+                throw new Error("语音配置无效，请检查服务商和接口地址");
+            }
+            if (config.provider === "Custom" && !config.model) throw new Error("请填写自定义语音的合成模型 ID");
+            if (config.provider === "OpenAI" && !config.apiKey) throw new Error("OpenAI API Key 未配置");
+            stream = body.stream;
+            qwen = isQwenTts(config);
+            if (stream && !qwen) throw new Error("当前语音接口未启用 Qwen 流式协议");
+            speechBody = qwen ? qwenSpeechBody(text, config, stream) : compatibleSpeechBody(text, config);
+            url = buildCompatibleVoiceUrl(config.baseUrl || (config.provider === "OpenAI" ? "https://api.openai.com/v1" : ""), "speech");
         } catch (error) {
             deadline.dispose();
             return reply(error instanceof SyntaxError ? "语音请求格式无效" : error instanceof Error ? error.message : "语音配置无效", 400);
         }
         // Standard Node TLS verification stays enabled. Never retry synthesis:
         // a lost response can already have generated/billed an utterance.
-        const upstream = await fetch(buildCompatibleVoiceUrl(resolveCompatibleVoiceBaseUrl(config), "speech"), {
+        const upstream = isDashscopeTts(config)
+            ? await requestDashscopeAudio(text, config, fetch, deadline.signal)
+            : await fetch(url, {
             method: "POST", signal: deadline.signal, redirect: "error", cache: "no-store",
             headers: { "Content-Type": "application/json", ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}) },
-            body: JSON.stringify(qwenSpeechBody(text, config, body.stream as boolean)),
+            body: JSON.stringify(speechBody),
         });
         if (!upstream.ok) {
             await upstream.body?.cancel(); deadline.dispose();
-            return reply(`Qwen 语音接口返回 HTTP ${upstream.status}，请检查接口权限、模型和克隆配置`, 502);
+            const hint = upstream.status === 401 || upstream.status === 403 ? "请检查 API Key 和模型权限"
+                : upstream.status === 404 ? "请检查接口地址和模型 ID"
+                : upstream.status === 429 ? "请检查接口配额或稍后重试"
+                : upstream.status < 500 ? "请检查模型 ID、音色及参考音频格式"
+                : "语音服务暂时无法处理请求";
+            return reply(`语音接口返回 HTTP ${upstream.status}，${hint}`, 502);
         }
         const mime = upstream.headers.get("content-type") || "";
         if (!/^(audio\/|application\/octet-stream\b)/i.test(mime) || !upstream.body) {
@@ -128,6 +144,8 @@ export async function POST(request: Request) {
     } catch (error) {
         await reader?.cancel().catch(() => {}); reader?.releaseLock();
         deadline.dispose();
-        return reply(deadline.signal.aborted ? "语音请求已取消或超时" : networkFailure(error), 502);
+        return reply(deadline.signal.aborted ? "语音请求已取消或超时"
+            : error instanceof Error && /^(?:DashScope|下载合成音频|请填写 DashScope|当前为文字转语音|语音接口只支持)/.test(error.message)
+                ? error.message : networkFailure(error), 502);
     }
 }

@@ -40,6 +40,9 @@ function setup() {
             },
         },
         "./tts-pcm-player": {},
+        "./tts-audio-stream": load("lib/tts-audio-stream.ts"),
+        "./reference-audio": load("lib/reference-audio.ts"),
+        "./dashscope-tts": load("lib/dashscope-tts.ts"),
     });
     return { ...service, requests };
 }
@@ -84,16 +87,22 @@ test("没有参考文本时，流式克隆请求仍带参考音频并启用 x-ve
     assert.equal("ref_text" in body, false);
 });
 
-test("没有本地参考音频时，自定义服务也允许使用服务器的默认音色", async () => {
+test("Base 缺少用户上传的参考音频时，在发起合成前明确提示", async () => {
     const app = setup();
-    await app.synthesizeSpeech("你好", config({ referenceAudio: undefined }));
+    await assert.rejects(app.synthesizeSpeech("你好", config({ referenceAudio: undefined })), /先上传人声音频/);
+    assert.equal(app.requests.length, 0);
+});
+
+test("非 Base 模型可以使用服务商内置音色", async () => {
+    const app = setup();
+    await app.synthesizeSpeech("你好", config({ model: "Qwen3-TTS-12Hz-1.7B-CustomVoice", referenceAudio: undefined }));
     assert.equal(app.requests[0].body.voice, "default");
     assert.equal("ref_audio" in app.requests[0].body, false);
 });
 
 test("已保存的服务商音色配置继续兼容", async () => {
     const app = setup();
-    await app.synthesizeSpeech("你好", config({ referenceAudio: undefined, defaultVoice: "saved-voice" }));
+    await app.synthesizeSpeech("你好", config({ model: "Qwen3-TTS-12Hz-1.7B-CustomVoice", referenceAudio: undefined, defaultVoice: "saved-voice" }));
     assert.equal(app.requests[0].body.voice, "saved-voice");
 });
 

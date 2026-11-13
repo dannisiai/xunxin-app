@@ -23,6 +23,20 @@ export function buildCompatibleVoiceUrl(baseUrl: string, endpoint: "speech" | "t
     url.pathname = url.pathname.replace(/\/+$/, "") + "/audio/" + endpoint;
     return url.toString();
 }
+export function compatibleSpeechBody(text: string, config: VoiceApiConfig) {
+    return {
+        model: config.model?.trim() || "tts-1",
+        input: text,
+        voice: config.defaultVoice?.trim() || "alloy",
+        response_format: "mp3",
+        ...(config.referenceAudio ? {
+            reference_audio: config.referenceAudio,
+            prompt_audio: config.referenceAudio,
+            prompt_text: config.referenceText,
+            reference_text: config.referenceText,
+        } : {}),
+    };
+}
 function appendPath(base: string, suffix: string): string {
     const url = httpUrl(base);
     url.pathname = url.pathname.replace(/\/+$/, "") + suffix;
@@ -67,7 +81,9 @@ export function buildVoiceProviderUrl(config: VoiceApiConfig, operation: "models
     }
     if ((operation === "models" && config.modelListUrl?.trim()) || (operation === "voices" && config.voiceListUrl?.trim())) {
         const raw = operation === "models" ? config.modelListUrl!.trim() : config.voiceListUrl!.trim();
-        return httpUrl(new URL(raw, base).toString()).toString();
+        const directory = httpUrl(base);
+        directory.pathname = directory.pathname.replace(/\/+$/, "") + "/";
+        return httpUrl(new URL(raw, directory).toString()).toString();
     }
     if (config.provider === "OpenAI" || config.provider === "Custom") {
         if (operation === "models") return appendPath(base, "/models");
@@ -107,41 +123,3 @@ export function voiceLocale(config: VoiceApiConfig): string {
     return locale;
 }
 
-export async function fetchModelsFromEndpoint(baseUrl: string, apiKey?: string, provider = "Custom"): Promise<string[]> {
-    if (!baseUrl) throw new Error("请先填写接口地址");
-    const modelsBase = baseUrl
-        .replace(/\/+$/, "")
-        .replace(/\/(chat\/completions|completions|embeddings|messages|audio\/speech|audio\/transcriptions)$/i, "");
-    const modelsUrl = /\/models$/i.test(modelsBase) ? modelsBase : `${modelsBase}/models`;
-    const isGoogle = provider === "Google" || baseUrl.includes("generativelanguage.googleapis.com");
-    const targetUrl = isGoogle && apiKey ? `${modelsUrl}?key=${encodeURIComponent(apiKey)}` : modelsUrl;
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (apiKey && !isGoogle) headers["Authorization"] = `Bearer ${apiKey}`;
-
-    let response: Response;
-    try {
-        response = await fetch(targetUrl, { method: "GET", headers });
-    } catch {
-        response = await fetch("/api/voice/catalog", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ config: { provider: "Custom", baseUrl: modelsBase, apiKey: apiKey || "" } }),
-        });
-    }
-
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error?.message || err.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    let modelNames: string[] = [];
-    if (Array.isArray(data?.data)) {
-        modelNames = data.data.map((m: any) => m.id || m.name).filter(Boolean);
-    } else if (Array.isArray(data?.models)) {
-        modelNames = data.models.map((m: any) => typeof m === "string" ? m : (m.name || m.id)).filter(Boolean);
-    } else {
-        throw new Error("服务商未返回模型列表");
-    }
-    return modelNames.map(m => m.replace(/^models\//, ""));
-}

@@ -88,7 +88,7 @@ jobs:
               raise SystemExit('Production signing certificate is not configured')
           package = temp / 'package'
           package.mkdir()
-          notes = os.environ.get('REQUESTED_NOTES') or 'App 内更新新增下载线路选择和当前线路提示，支持自定义域名的更新源及 GitHub 备用线路，保留安装包摘要和签名校验。'
+          notes = os.environ.get('REQUESTED_NOTES') or '修复语音试听与用户参考音频克隆，新增 AAC 上传识别，完善语音接口中转和播放错误提示。'
           (package / 'notes.md').write_text(notes, encoding='utf-8')
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write(f'SHELL_VERSION_CODE={code}\nSHELL_VERSION_NAME={version}\nRELEASE_TAG=android-v{version}-{code}\n')
@@ -100,6 +100,8 @@ jobs:
         run: |
           npm ci
           npm run build
+          node scripts/check-voice-release-bundle.cjs .next
+          cp .next/voice-release-audit.json "$RUNNER_TEMP/package/voice-release-audit.json"
           python3 scripts/prepare-xunxin-android.py
           python3 scripts/install-android-node.py --install-toolchain
       - name: Build APK

@@ -10,9 +10,16 @@ export function isQwenTts(config: VoiceApiConfig): boolean {
     } catch { return false; }
 }
 
+export function requiresQwenReference(config: VoiceApiConfig): boolean {
+    return isQwenTts(config) && /(?:^|[-_/\s])base(?:$|[-_/\s])/i.test(config.model || "");
+}
+
 export function qwenSpeechBody(text: string, config: VoiceApiConfig, stream: boolean) {
     const reference = config.referenceAudio?.trim();
     const transcript = config.referenceText?.trim();
+    if (requiresQwenReference(config) && !reference) {
+        throw new Error("Qwen3-TTS Base 需要参考音频，请先上传人声音频后再试听或合成");
+    }
     return {
         // Compatible servers may require this field even for Base cloning.
         // The uploaded reference selects the voice; a stale catalog ID must not override it.
