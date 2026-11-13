@@ -1,7 +1,7 @@
 {
   "versionCode": 14,
   "versionName": "1.3.0",
-  "apkUrl": "https://updates.example.com/xunxin/xunxin-1.3.0.apk",
+  "apkUrl": "https://xunxin.shop/downloads/android/xunxin-1.3.0-14.apk",
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "forceUpdate": false,
   "releaseNotes": "仅为格式示例。请从实际固定签名 APK 生成真实摘要后部署。"

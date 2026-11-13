@@ -1,5 +1,7 @@
 # 默认免费加速下载
 
+> 历史方案，仅供旧版本参考。当前 OTA 请使用[日本服务器部署流程](android-ota-updates.md#日本服务器部署)。
+
 从 1.0.1（内部版本号 24）起，Android 更新安装包默认使用 `https://gh-proxy.com/` 加速公开 GitHub Releases 资源。此公益服务没有可用性或速度保证，失败时自动尝试原始 GitHub 地址。
 
 更新清单继续从既有的 GitHub 固定通道获取，不经第三方代理。发布脚本自动把清单中的 APK 地址及发布说明的首个下载链接改为加速地址。每个新 Release 使用固定资产名 `xunxin.apk`，因此 README 的 latest 下载链接在后续发布时无需修改。

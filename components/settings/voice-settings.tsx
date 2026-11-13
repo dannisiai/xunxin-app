@@ -7,7 +7,8 @@ import type { VoiceApiConfig } from "@/lib/settings-types";
 import { loadVoiceConfigs, saveVoiceConfigs } from "@/lib/settings-storage";
 import { speakSpeech } from "@/lib/tts-service";
 import { ConfirmDialog } from "@/components/ui/modal";
-import { Toggle, Input } from "@/components/ui/form";
+import { Toggle, Input, Select } from "@/components/ui/form";
+import { isQwenTts } from "@/lib/qwen-tts";
 import { Alert } from "@/components/ui/feedback";
 import { VoiceProviderFields } from "./voice-provider-fields";
 import { ReferenceVoiceFields } from "./reference-voice-fields";
@@ -235,7 +236,7 @@ export function VoiceSettings({ embedded = false, accountId }: { embedded?: bool
         };
         try {
             const previewText = "你好，这是一段语音试听，很高兴认识你。";
-            const playback = speakSpeech(previewText, config, { signal: controller.signal, stream: false, reportPlaybackErrors: true });
+            const playback = speakSpeech(previewText, config, { signal: controller.signal, reportPlaybackErrors: true });
             previewPlaybackRef.current = playback.abort;
             await playback.promise;
             finish();
@@ -377,12 +378,30 @@ export function VoiceSettings({ embedded = false, accountId }: { embedded?: bool
                                             onCancel={() => { cancelCatalog(config.id); setCatalogNotices(prev => ({ ...prev, [config.id]: "已停止拉取，保留已有配置与列表。" })); }}
                                             message={catalogNotices[config.id]} error={catalogErrors[config.id]} />
                                         <div className="flex flex-col gap-2">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="menu-label">语音合成</span>
+                                                <Toggle checked={config.enableTTS !== false} aria-label="启用此方案的语音合成"
+                                                    onChange={enableTTS => updateConfig(config.id, { enableTTS })} />
+                                            </div>
+                                            {config.enableTTS === false && <p className="menu-desc" role="status">此方案的语音回复和试听已关闭。</p>}
+                                            {isQwenTts(config) && <label className="flex flex-col gap-1">
+                                                <span className="menu-desc">语音输出方式</span>
+                                                <Select value={config.qwenPcmProtocol ?? "file"} onChange={event => {
+                                                    const protocol = event.target.value;
+                                                    updateConfig(config.id, { qwenPcmProtocol: protocol === "raw-pcm" || protocol === "vllm-omni" ? protocol : undefined });
+                                                }}>
+                                                    <option value="file">完整音频（默认）</option>
+                                                    <option value="vllm-omni">流式 PCM（vLLM-Omni）</option>
+                                                    <option value="raw-pcm">流式 PCM（其他兼容服务）</option>
+                                                </Select>
+                                                <span className="menu-desc">确认服务支持所选协议后再开启流式。</span>
+                                            </label>}
                                             {config.provider === "Custom" && resolveVoiceMode(config) === "tts" && !isMiniCPMVoiceConfig(config) && (
                                                 <ReferenceVoiceFields key={config.id} config={config} onBusy={setReadingReference}
                                                     onChange={patch => updateConfig(config.id, patch)} />
                                             )}
                                             {(resolveVoiceMode(config) === "tts" || isMiniCPMVoiceConfig(config)) && <button type="button" onClick={() => togglePreview(config)}
-                                                disabled={readingReference || !SUPPORTED_VOICE_PROVIDERS.has(config.provider)}
+                                                disabled={config.enableTTS === false || readingReference || !SUPPORTED_VOICE_PROVIDERS.has(config.provider)}
                                                 className="ui-btn ui-btn-soft-action" data-active={playingVoiceId === config.id}>
                                                 {playingVoiceId === config.id ? <Pause size={18} /> : <Play size={18} />}
                                                 {playingVoiceId === config.id ? "停止试听" : "试听合成音色"}

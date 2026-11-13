@@ -3,11 +3,11 @@
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
 import { buildCompatibleVoiceUrl, compatibleSpeechBody, resolveCompatibleVoiceBaseUrl } from "./voice-api";
-import { usesMiniCPMTts } from "./voice-mode";
-import { isQwenTts, qwenSpeechBody } from "./qwen-tts";
+import { usesMiniCPMTts, voiceSynthesisBlockReason } from "./voice-mode";
+import { isQwenTts, qwenSpeechBody, supportsQwenPcmStream } from "./qwen-tts";
 import { fetchTtsResponse as fetchWithTimeout } from "./tts-request";
 import { playPcmResponse } from "./tts-pcm-player";
-import { isPcmAudioResponse } from "./tts-audio-stream";
+import { classifySpeechAudio, speechHttpError, SpeechAudioError, SPEECH_SYNTHESIS_TIMEOUT_MS } from "./tts-audio-stream";
 import { detectAudioMime, isAndroidVoiceShell } from "./reference-audio";
 import { isDashscopeTts, requestDashscopeAudio } from "./dashscope-tts";
 
@@ -18,7 +18,7 @@ let streamingPlaybackReservations = 0;
 
 async function requestCompatibleSpeech(text: string, config: VoiceApiConfig, stream: boolean, signal?: AbortSignal): Promise<Response> {
     const qwen = isQwenTts(config);
-    if (stream && !qwen) throw new Error("当前语音接口未启用 Qwen 流式协议");
+    if (stream && !supportsQwenPcmStream(config)) throw new SpeechAudioError("当前语音方案未启用 PCM 流式协议。");
     // Validate Base cloning before either a local relay or a direct generation request.
     const speechBody = qwen ? qwenSpeechBody(text, config, stream) : compatibleSpeechBody(text, config);
     // The bundled Android runtime already has a cookie-protected loopback server.
@@ -31,12 +31,16 @@ async function requestCompatibleSpeech(text: string, config: VoiceApiConfig, str
         body: JSON.stringify(local ? { text, stream, config: {
             provider: config.provider, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model,
             defaultVoice: config.defaultVoice, referenceAudio: config.referenceAudio, referenceText: config.referenceText,
+            qwenPcmProtocol: config.qwenPcmProtocol,
         } } : speechBody),
-    }, local || qwen ? 240_000 : 120_000);
+    }, local || qwen ? SPEECH_SYNTHESIS_TIMEOUT_MS : 120_000);
     if (!response.ok) {
         const detail = local ? await response.json().catch(() => null) : null;
         if (!local) await response.body?.cancel();
-        throw new Error(typeof detail?.error === "string" ? detail.error : `语音合成请求失败（HTTP ${response.status}）`);
+        const status = Number(response.headers.get("x-speech-upstream-status"));
+        if (local && status >= 400 && status <= 599) throw speechHttpError(status);
+        if (local && response.headers.get("x-speech-error") === "unexpected-sse") throw new SpeechAudioError("语音接口返回了 SSE 事件，请切换到完整音频或选择正确的 PCM 协议。");
+        throw local && typeof detail?.error === "string" ? new SpeechAudioError(detail.error) : speechHttpError(response.status);
     }
     return response;
 }
@@ -58,7 +62,7 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
     const signal = controller.signal;
     let playback: SpeechPlayback | null = null;
     let streamContext: AudioContext | null = null;
-    const streaming = options?.stream !== false && isQwenTts(config);
+    const streaming = options?.stream !== false && supportsQwenPcmStream(config);
     const playBlob = options?.playBlob || ((blob: Blob) => playAudioBlobElement(blob, options?.reportPlaybackErrors));
     if (streaming) streamingPlaybackReservations++;
     const abort = () => { controller.abort(); playback?.abort(); };
@@ -67,6 +71,8 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
     const promise = (async () => {
         signal.throwIfAborted();
         if (!text.trim()) return;
+        const blocked = voiceSynthesisBlockReason(config);
+        if (blocked) throw new SpeechAudioError(blocked);
         const context = streamContext = streaming ? getAudioContext() : null;
         // Check playback permission BEFORE sending a synthesis request. A media-element
         // fallback must never resubmit a stream that has already generated audio.
@@ -74,10 +80,12 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
             await Promise.race([context.resume().catch(() => {}), new Promise(resolve => setTimeout(resolve, 800))]);
             signal.throwIfAborted();
         }
+        if (streaming && options?.reportPlaybackErrors && context?.state !== "running") {
+            throw new SpeechAudioError("无法启动流式试听，请重试或切换到完整音频。");
+        }
         if (context?.state === "running") {
-            const response = await requestStreamingSpeech(text, config, signal);
-            const type = (response.headers.get("content-type") || "").toLowerCase();
-            if (isPcmAudioResponse(response)) {
+            const { kind, response } = await classifySpeechAudio(await requestStreamingSpeech(text, config, signal), signal, true);
+            if (kind === "pcm") {
                 const gain = context.createGain(); gain.gain.value = _ttsVolume; gain.connect(context.destination);
                 _activeGain = gain;
                 try { await playPcmResponse(response, context, gain, signal); }
@@ -88,9 +96,6 @@ export function speakSpeech(text: string, config: VoiceApiConfig, options?: {
                     }
                 }
                 return;
-            }
-            if (!type.startsWith("audio/")) {
-                await response.body?.cancel(); throw new Error("语音接口未返回 PCM 流或音频文件");
             }
             // Some compatible servers ignore stream=true and return a complete WAV/MP3.
             const blob = await response.blob();
@@ -266,7 +271,8 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig, signal?: A
     if (!custom && !apiKey) throw new Error("OpenAI API Key 未配置");
     if (custom && !config.model?.trim()) throw new Error("请填写自定义语音的合成模型 ID");
 
-    const response = await requestCompatibleSpeech(text, config, false, signal);
+    const received = await requestCompatibleSpeech(text, config, false, signal);
+    const response = isQwenTts(config) ? await completeQwenAudio(received, signal) : received;
 
     const contentType = (response.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
     if (contentType.includes("json") || contentType.startsWith("text/")) {
@@ -277,6 +283,13 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig, signal?: A
     const detected = detectAudioMime(new Uint8Array(await blob.slice(0, 12).arrayBuffer()));
     const mime = detected || (contentType.startsWith("audio/") ? contentType : "audio/mpeg");
     return blob.type === mime ? blob : blob.slice(0, blob.size, mime);
+}
+
+async function completeQwenAudio(response: Response, signal?: AbortSignal): Promise<Response> {
+    const audio = await classifySpeechAudio(response, signal ?? new AbortController().signal, false);
+    if (audio.kind === "file") return audio.response;
+    await audio.response.body?.cancel();
+    throw new SpeechAudioError("语音接口在完整音频模式下返回了裸 PCM，请检查接口协议。");
 }
 
 // ── iOS audio playback that coexists with speech recognition ──────────

@@ -4,7 +4,7 @@
 
 ## 已部署内容
 
-- 仓库：`dannisiai/xunxin-app`。
+- 仓库：`dannisiai/xunxin-android`。
 - 生产源码分支：`android-ota-production`。
 - 基线 APK 源码：`6dda4e78f00c4755e51413bf6c4335fb60c9906f`。
 - 工作流：`Publish signed Android OTA`，已在默认分支注册，默认检出生产分支；发布标签使用实际检出的源码提交。
@@ -13,13 +13,13 @@
 - 证书 SHA-256：`4c17f30aa35c9d236d84218fc3fb26a3c978dfbacb2aa633bbc92898bfb8be8d`。
 - 普通更新，`forceUpdate=false`。
 
-APK：[下载寻信 1.0.0](https://github.com/dannisiai/xunxin-app/releases/download/android-v1.0.0-14/xunxin-1.0.0.apk)。
+APK：[下载寻信 1.0.0](https://github.com/dannisiai/xunxin-android/releases/download/android-v1.0.0-14/xunxin-1.0.0.apk)。
 
-固定更新清单：[version.json](https://github.com/dannisiai/xunxin-app/releases/download/android-ota-stable/version.json)。客户端启动时或通过设置中的「检查更新」读取这个地址。
+固定更新清单：[version.json](https://github.com/dannisiai/xunxin-android/releases/download/android-ota-stable/version.json)。客户端启动时或通过设置中的「检查更新」读取这个地址。
 
 APK SHA-256：`813d81afe58c82d4c4288da645e71312f28779445b56cfb4fc7f812a106f12d0`。
 
-成功构建：[42694088775](https://github.com/dannisiai/xunxin-app/actions/runs/42694088775)。首轮构建因 localhost 的网络安全声明缺少 `includeSubdomains` 被 Release lint 阻止；已明确设为 `false`，只允许确切的 localhost 明文例外，保留默认禁止明文和 OTA HTTPS 限制。
+成功构建：[42694088775](https://github.com/dannisiai/xunxin-android/actions/runs/42694088775)。首轮构建因 localhost 的网络安全声明缺少 `includeSubdomains` 被 Release lint 阻止；已明确设为 `false`，只允许确切的 localhost 明文例外，保留默认禁止明文和 OTA HTTPS 限制。
 
 ## 首次迁移
 

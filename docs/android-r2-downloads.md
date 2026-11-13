@@ -1,5 +1,7 @@
 # Cloudflare R2：App 内更新
 
+> 历史方案，仅供旧版本参考。当前 OTA 请使用[日本服务器部署流程](android-ota-updates.md#日本服务器部署)。
+
 计划使用 `https://download.xunxin.shop/android/version.json`。自动模式先检查该地址，失败时检查原 GitHub 清单。清单提供 R2 下载链接和 GitHub 备用链接，两者对应同一签名 APK 和 SHA-256。更新弹窗可以选线路，下载时显示当前域名；暂停后选另一线路会重新下载，原有摘要和签名检查不变。
 
 ## 域名和存储桶

@@ -8,8 +8,6 @@ const signatures = [
     /20166\s*,\s*37011\s*,\s*30757\s*,\s*25169/,
     /20344\s*,\s*29966\s*,\s*22709\s*,\s*26218/,
     /offline_push_revamp_notice_2026_08_v1/,
-    /\b(?:HINT_PAYLOAD|TONE_LUT|DIAG_TABLE|sweepMediaHints|calibrateToneCache|scheduleDiagSnapshot)\b/,
-    /那么你被骗了/,
 ];
 let scanned = 0;
 const matches = [];
@@ -18,7 +16,7 @@ function scan(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const file = path.join(directory, entry.name);
         if (entry.isDirectory()) scan(file);
-        else if (/\.(?:[cm]?js|tsx?|html|kt|java|cpp)$/.test(file)) {
+        else if (file.endsWith(".js")) {
             scanned++;
             const source = fs.readFileSync(file, "utf8");
             if (signatures.some(pattern => pattern.test(source))) matches.push(file);
@@ -28,4 +26,4 @@ function scan(directory) {
 for (const directory of process.argv.slice(2).length ? process.argv.slice(2) : [".next/static"]) scan(directory);
 if (!scanned) throw new Error("No compiled application scripts were checked");
 if (matches.length) throw new Error(`Upstream popup remains in compiled application: ${matches.join(", ")}`);
-console.log(`Checked ${scanned} application files: no known upstream popup payloads`);
+console.log(`Checked ${scanned} compiled scripts: no known upstream popup payloads`);

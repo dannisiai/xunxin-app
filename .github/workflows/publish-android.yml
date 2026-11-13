@@ -1,4 +1,4 @@
-name: Publish Android
+name: Prepare Android release
 run-name: Android release from ${{ github.sha }}
 on:
   push:
@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: android-stable-release
   cancel-in-progress: false
@@ -33,8 +33,6 @@ jobs:
       XUNXIN_ANDROID_LOCAL: '1'
       NEXT_TELEMETRY_DISABLED: '1'
       NODE_OPTIONS: --max-old-space-size=6144
-      SHELL_UPDATE_URL: https://github.com/${{ github.repository }}/releases/download/android-ota-stable/version.json
-      SHELL_UPDATE_MIRROR_URL: ${{ vars.SHELL_UPDATE_MIRROR_URL }}
       SIGNING_CERT_SHA256: ${{ vars.SHELL_SIGNING_CERT_SHA256 }}
       REQUESTED_VERSION: ${{ inputs.version_name }}
       REQUESTED_NOTES: ${{ inputs.release_notes }}
@@ -57,24 +55,15 @@ jobs:
         with:
           gradle-version: '8.7'
       - name: Configure release version
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import json, os, re, subprocess
+          import json, os, re
+          import urllib.request
           from pathlib import Path
-          repo = os.environ['GITHUB_REPOSITORY']
           temp = Path(os.environ['RUNNER_TEMP'])
-          prior = temp / 'prior'
-          prior.mkdir()
-          lookup = subprocess.run(['gh', 'api', f'repos/{repo}/releases/tags/android-ota-stable'], capture_output=True, text=True)
-          previous = None
-          if lookup.returncode == 0:
-              subprocess.run(['gh', 'release', 'download', 'android-ota-stable', '--repo', repo, '--pattern', 'version.json', '--dir', str(prior)], check=True)
-              previous = json.loads((prior / 'version.json').read_text())
-          elif 'HTTP 404' not in lookup.stderr:
-              raise SystemExit(lookup.stderr)
-          code = max(23, int(previous['versionCode']) + 1 if previous else 23)
+          with urllib.request.urlopen('https://xunxin.shop/downloads/android/version.json', timeout=20) as response:
+              previous = json.loads(response.read(65537))
+          code = max(28, int(previous['versionCode']) + 1)
           version = os.environ.get('REQUESTED_VERSION') or json.loads(Path('package.json').read_text())['version']
           if previous and not os.environ.get('REQUESTED_VERSION'):
               old = tuple(map(int, previous['versionName'].split('.')))
@@ -88,7 +77,7 @@ jobs:
               raise SystemExit('Production signing certificate is not configured')
           package = temp / 'package'
           package.mkdir()
-          notes = os.environ.get('REQUESTED_NOTES') or '修复语音试听与用户参考音频克隆，新增 AAC 上传识别，完善语音接口中转和播放错误提示。'
+          notes = os.environ.get('REQUESTED_NOTES') or '应用更新统一使用日本服务器，缩小抖音一起看悬浮窗。'
           (package / 'notes.md').write_text(notes, encoding='utf-8')
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write(f'SHELL_VERSION_CODE={code}\nSHELL_VERSION_NAME={version}\nRELEASE_TAG=android-v{version}-{code}\n')
@@ -100,8 +89,6 @@ jobs:
         run: |
           npm ci
           npm run build
-          node scripts/check-voice-release-bundle.cjs .next
-          cp .next/voice-release-audit.json "$RUNNER_TEMP/package/voice-release-audit.json"
           python3 scripts/prepare-xunxin-android.py
           python3 scripts/install-android-node.py --install-toolchain
       - name: Build APK
@@ -113,10 +100,6 @@ jobs:
         run: |
           set -eu
           if [ -n "$SHELL_KEYSTORE_BASE64" ]; then
-            if [ -n "$SHELL_UPDATE_MIRROR_URL" ]; then
-              echo 'R2 releases use the local signed publisher to update both feeds.' >&2
-              exit 1
-            fi
             test -n "$SHELL_KEYSTORE_PASSWORD"
             test -n "$SHELL_KEY_ALIAS"
             test -n "$SHELL_KEY_PASSWORD"
@@ -143,13 +126,14 @@ jobs:
           python3 - <<'PY'
           import json, os
           from pathlib import Path
-          data = {name: os.environ[name] for name in ['SHELL_VERSION_CODE', 'SHELL_VERSION_NAME', 'RELEASE_TAG', 'GITHUB_SHA', 'GITHUB_REPOSITORY', 'SIGNING_CERT_SHA256', 'SHELL_UPDATE_MIRROR_URL']}
+          data = {name: os.environ[name] for name in ['SHELL_VERSION_CODE', 'SHELL_VERSION_NAME', 'RELEASE_TAG', 'GITHUB_SHA', 'GITHUB_REPOSITORY', 'SIGNING_CERT_SHA256', 'FORCE_UPDATE']}
+          data['SHELL_UPDATE_URL'] = 'https://xunxin.shop/downloads/android/version.json'
           (Path(os.environ['RUNNER_TEMP']) / 'package' / 'release-metadata.json').write_text(json.dumps(data, indent=2), encoding='utf-8')
           PY
           if [ "${CLOUD_SIGNING_CONFIGURED:-false}" = true ]; then
             force=()
             if [ "$FORCE_UPDATE" = true ]; then force=(--force-update); fi
-            python3 scripts/create-android-update-feed.py --apk "$apk" --apk-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/xunxin.apk" --notes-file "$RUNNER_TEMP/package/notes.md" --download-notes-output "$RUNNER_TEMP/package/download-notes.md" --expected-certificate-sha256 "$SIGNING_CERT_SHA256" --output "$RUNNER_TEMP/package/version.json" "${force[@]}"
+            python3 scripts/create-android-update-feed.py --apk "$apk" --notes-file "$RUNNER_TEMP/package/notes.md" --download-notes-output "$RUNNER_TEMP/package/download-notes.md" --expected-certificate-sha256 "$SIGNING_CERT_SHA256" --output "$RUNNER_TEMP/package/version.json" "${force[@]}"
           fi
       - name: Preserve release artifacts
         uses: actions/upload-artifact@v4
@@ -158,18 +142,6 @@ jobs:
           path: ${{ runner.temp }}/package/*
           if-no-files-found: error
           retention-days: 14
-      - name: Publish release and automatic update channel
-        if: env.CLOUD_SIGNING_CONFIGURED == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/package/xunxin.apk" "$RUNNER_TEMP/package/version.json" "$RUNNER_TEMP/package/popup-audit.json" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "寻信 $SHELL_VERSION_NAME" --notes-file "$RUNNER_TEMP/package/download-notes.md" --latest
-          if gh release view android-ota-stable --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload android-ota-stable "$RUNNER_TEMP/package/version.json" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create android-ota-stable "$RUNNER_TEMP/package/version.json" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'Android 自动更新通道' --notes 'App 固定使用此地址检查更新。' --latest=false
-          fi
       - name: Remove runner signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/signing.keystore"

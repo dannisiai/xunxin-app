@@ -8,7 +8,6 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -19,7 +18,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 
 /** Native dialogs and a persistent mandatory-update gate; no business data is changed. */
@@ -32,7 +30,6 @@ class AppUpdateController(
     private var dialogKey = ""
     private var detail: TextView? = null
     private var bar: ProgressBar? = null
-    private var preferredDownloadUrl: String? = null
     private var foreground = false
     private var requested = false
     private var dismissedIdentity: String? = null
@@ -91,8 +88,6 @@ class AppUpdateController(
         if (!foreground || activity.isFinishing || activity.isDestroyed) return
         if (resumePermissionRequest()) return
         val manifest = state.manifest
-        val sources = manifest?.let(repository::downloadSources).orEmpty()
-        if (preferredDownloadUrl?.let { it !in sources } == true) preferredDownloadUrl = null
         val shouldShow = required || requested || (manifest != null && dismissedIdentity != manifest.identity
             && state.phase != AppUpdatePhase.CHECKING)
         if (!shouldShow || state.phase == AppUpdatePhase.IDLE && !requested) {
@@ -105,19 +100,10 @@ class AppUpdateController(
         fun dp(value: Int) = (value * density).toInt()
         detail = TextView(activity).apply { textSize = 15f; setPadding(dp(24), dp(12), dp(24), dp(12)) }
         bar = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
-        val canChooseSource = sources.size > 1 && state.phase in listOf(AppUpdatePhase.AVAILABLE, AppUpdatePhase.PAUSED, AppUpdatePhase.ERROR)
         val layout = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             val height = minOf(dp(230), (activity.resources.displayMetrics.heightPixels * 0.35f).toInt()).coerceAtLeast(dp(72))
             addView(ScrollView(activity).apply { addView(detail) }, LinearLayout.LayoutParams(-1, height))
-            if (canChooseSource) {
-                val sourceButton = Button(activity).apply {
-                    isAllCaps = false
-                    text = "下载线路：${preferredDownloadUrl?.toHttpUrl()?.host ?: "自动"}"
-                    setOnClickListener { chooseDownloadSource(sources, this) }
-                }
-                addView(sourceButton, LinearLayout.LayoutParams(-1, -2).apply { leftMargin = dp(24); rightMargin = dp(24) })
-            }
             addView(bar, LinearLayout.LayoutParams(-1, dp(18)).apply { leftMargin = dp(24); rightMargin = dp(24) })
         }
         val working = state.phase == AppUpdatePhase.DOWNLOADING || state.phase == AppUpdatePhase.VERIFYING
@@ -148,8 +134,8 @@ class AppUpdateController(
                 when (repository.state.phase) {
                     AppUpdatePhase.IDLE -> { requested = false; shown.dismiss(); dialog = null; dialogKey = "" }
                     AppUpdatePhase.READY -> requestInstall()
-                    AppUpdatePhase.ERROR -> if (repository.state.manifest == null) repository.check() else repository.download(preferredDownloadUrl)
-                    else -> repository.download(preferredDownloadUrl)
+                    AppUpdatePhase.ERROR -> if (repository.state.manifest == null) repository.check() else repository.download()
+                    else -> repository.download()
                 }
             }
             shown.getButton(AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener {
@@ -166,27 +152,12 @@ class AppUpdateController(
         }
         shown.show(); updateProgress(state)
     }
-    private fun chooseDownloadSource(sources: List<String>, button: Button) {
-        val names = listOf("自动（优先主线路，失败切换）") + sources.map { url ->
-            val host = url.toHttpUrl().host
-            if (host == "github.com") "GitHub 原始下载" else host
-        }
-        AlertDialog.Builder(activity).setTitle("选择下载线路（换线路将重新下载）")
-            .setSingleChoiceItems(names.toTypedArray(), (preferredDownloadUrl?.let(sources::indexOf) ?: -1) + 1) { choice, index ->
-                preferredDownloadUrl = sources.getOrNull(index - 1)
-                button.text = "下载线路：${if (index == 0) "自动" else names[index]}"
-                choice.dismiss()
-            }.setNegativeButton("取消", null).show()
-    }
     private fun updateProgress(state: AppUpdateState) {
         val manifest = state.manifest
         fun mb(size: Long) = String.format(java.util.Locale.ROOT, "%.1f", size / 1048576.0)
         val status = when (state.phase) {
             AppUpdatePhase.CHECKING -> "正在安全检查最新版本…"
-            AppUpdatePhase.DOWNLOADING -> {
-                val progress = if (state.total > 0) "已下载 ${mb(state.downloaded)} / ${mb(state.total)} MB" else "已下载 ${mb(state.downloaded)} MB"
-                listOfNotNull(state.downloadHost.takeIf { it.isNotBlank() }?.let { "当前线路：$it" }, progress).joinToString("\n")
-            }
+            AppUpdatePhase.DOWNLOADING -> if (state.total > 0) "已下载 ${mb(state.downloaded)} / ${mb(state.total)} MB" else "已下载 ${mb(state.downloaded)} MB"
             AppUpdatePhase.VERIFYING -> "正在校验 SHA-256、包名、版本和数字签名…"
             else -> state.message
         }

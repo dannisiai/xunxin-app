@@ -38,6 +38,9 @@ class CompanionVoicePlayer(
     private var pcm: CompanionPcmStream? = null
     private var focus: AudioFocusRequest? = null
     private var loadingTimeout: Runnable? = null
+    private var pausedFrom: String? = null
+    var errorMessage: String? = null
+        private set
     var state = "idle"
         private set
     val hasAudio get() = cached != null
@@ -48,7 +51,9 @@ class CompanionVoicePlayer(
         requestId = id
         accepting = true
         state = "loading"
-        armTimeout(125_000L)
+        // The proxy and client each allow four minutes; leave time for the
+        // bridge to deliver the result or the client to report its timeout.
+        armTimeout(SYNTHESIS_TIMEOUT_MS + 5_000L)
         onChanged()
     }
 
@@ -120,7 +125,10 @@ class CompanionVoicePlayer(
         val ticket = generation
         val next = CompanionPcmStream(sampleRate, attributes, directory,
             onStarted = { handler.post {
-                if (!closed && generation == ticket && requestId == id) { state = "playing"; onChanged() }
+                if (!closed && generation == ticket && requestId == id) {
+                    if (pausedFrom != null) pausedFrom = "playing" else state = "playing"
+                    onChanged()
+                }
             } },
             onCompleted = { file -> handler.post {
                 if (closed || generation != ticket || requestId != id) file.delete()
@@ -138,15 +146,15 @@ class CompanionVoicePlayer(
         pcm = next
         return try {
             onPlaybackActive(true)
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(attributes).setWillPauseWhenDucked(true)
-                .setOnAudioFocusChangeListener({ change -> if (change < 0 && pcm === next) stop() }, handler).build()
+            val request = focusRequest { change ->
+                if (pcm === next) handleFocusChange(id, change, { next.pause() }, { next.resume() })
+            }
             focus = request
             if (audioManager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                fail(id, "暂时无法播放语音，可稍后点重试。")
+                fail(id, "安卓未授予音频焦点，请稍后重试语音。")
                 false
             } else {
-                armTimeout(240_000L); next.start(); true
+                next.start(); true
             }
         } catch (_: Exception) {
             fail(id, "无法开始流式语音，可点重试。")
@@ -171,15 +179,17 @@ class CompanionVoicePlayer(
     fun finishPcm(id: String) {
         if (closed || !accepting || requestId != id) return
         accepting = false
+        armTimeout(if (pausedFrom != null) FOCUS_WAIT_TIMEOUT_MS else PLAYBACK_DRAIN_TIMEOUT_MS)
         pcm?.finish()
     }
 
     fun stopPcm(id: String) { if (requestId == id && pcm != null) stop() }
 
     fun fail(id: String, message: String) {
-        if (closed || requestId != id) return
+        if (closed || requestId != id || state == "error") return
         stop()
         state = "error"
+        errorMessage = message
         onChanged()
         onError(message)
     }
@@ -202,14 +212,12 @@ class CompanionVoicePlayer(
                 loadingTimeout?.let { handler.removeCallbacks(it) }; loadingTimeout = null
                 try {
                     onPlaybackActive(true)
-                    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                        .setAudioAttributes(attributes).setWillPauseWhenDucked(true)
-                        .setOnAudioFocusChangeListener({ change ->
-                            if (change < 0 && player === next) stop()
-                        }, handler).build()
+                    val request = focusRequest { change ->
+                        if (player === next) handleFocusChange(requestId.orEmpty(), change, { next.pause() }, { next.start() })
+                    }
                     focus = request
                     if (audioManager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                        fail(requestId.orEmpty(), "暂时无法播放语音，可稍后点重播。")
+                        fail(requestId.orEmpty(), "安卓未授予音频焦点，请稍后点重播。")
                     } else {
                         next.start()
                         state = "playing"
@@ -230,11 +238,49 @@ class CompanionVoicePlayer(
         }
     }
 
+    private fun focusRequest(onChange: (Int) -> Unit): AudioFocusRequest =
+        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(attributes).setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener({ change -> onChange(change) }, handler).build()
+
+    private fun handleFocusChange(id: String, change: Int, pause: () -> Unit, resume: () -> Unit) {
+        try {
+            when (change) {
+                AudioManager.AUDIOFOCUS_LOSS -> fail(id, "语音被其他音频打断，可手动重播或重试。")
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    if (pausedFrom != null) return
+                    pausedFrom = state
+                    pause()
+                    state = "paused"
+                    if (!accepting) armTimeout(FOCUS_WAIT_TIMEOUT_MS)
+                    onChanged()
+                }
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    val previous = pausedFrom ?: return
+                    resume()
+                    pausedFrom = null
+                    state = previous
+                    if (pcm != null && !accepting) {
+                        armTimeout(PLAYBACK_DRAIN_TIMEOUT_MS)
+                    } else if (player != null) {
+                        loadingTimeout?.let { handler.removeCallbacks(it) }
+                        loadingTimeout = null
+                    }
+                    onChanged()
+                }
+            }
+        } catch (_: Exception) {
+            fail(id, "语音暂停或恢复失败，可手动重播或重试。")
+        }
+    }
+
     /** Keep a completed clip for replay; invalidate pending synthesis/decoding/preparation. */
     fun stop() {
         generation++
         loadingTimeout?.let { handler.removeCallbacks(it) }; loadingTimeout = null
         accepting = false
+        pausedFrom = null
+        errorMessage = null
         encoded = null
         pcm?.cancel(); pcm = null
         player?.let { runCatching { it.release() } }; player = null
@@ -248,7 +294,8 @@ class CompanionVoicePlayer(
         loadingTimeout?.let { handler.removeCallbacks(it) }
         val ticket = generation
         val timeout = Runnable {
-            if (!closed && ticket == generation) fail(requestId.orEmpty(), "语音准备超时，可点重试。")
+            if (!closed && ticket == generation) fail(requestId.orEmpty(),
+                if (state == "paused") "等待音频焦点超时，可手动重播或重试。" else "语音准备或播放超时，可点重试。")
         }
         loadingTimeout = timeout
         handler.postDelayed(timeout, delay)
@@ -264,5 +311,8 @@ class CompanionVoicePlayer(
         private const val MAX_BYTES = 4 * 1024 * 1024
         private const val MAX_ENCODED = ((MAX_BYTES + 2) / 3) * 4
         private const val CHUNK_SIZE = 48 * 1024
+        private const val SYNTHESIS_TIMEOUT_MS = 240_000L
+        private const val PLAYBACK_DRAIN_TIMEOUT_MS = 30_000L
+        private const val FOCUS_WAIT_TIMEOUT_MS = 60_000L
     }
 }

@@ -189,6 +189,8 @@ export type VoiceApiConfig = {
     openaiRealtime?: RealtimeVoiceEndpoint;
     /** TTS settings remain available independently of the selected realtime protocol. */
     customTtsProtocol?: "openai-compatible" | "minicpm";
+    /** Complete audio is the default; only opt in to a verified server protocol. */
+    qwenPcmProtocol?: "raw-pcm" | "vllm-omni";
     /** Separate Gateway URL so switching modes preserves the REST TTS address and credentials. */
     miniCPMGatewayUrl?: string;
     apiKey: string;

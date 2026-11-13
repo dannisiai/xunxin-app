@@ -20,6 +20,7 @@ function load(file, dependencies = {}) {
 const mode = load("lib/voice-mode.ts");
 const qwen = load("lib/qwen-tts.ts");
 const reference = "data:audio/wav;base64,dGVzdA==";
+const wave = Buffer.concat([Buffer.from("RIFF"), Buffer.from([12, 0, 0, 0]), Buffer.from("WAVEtest-audio")]);
 const config = overrides => ({
     id: "clone", provider: "Custom", apiKey: "", baseUrl: "https://voice.example/v1",
     model: "Qwen3-TTS-12Hz-1.7B-Base", defaultVoice: "", referenceAudio: reference,
@@ -36,7 +37,7 @@ function setup() {
         "./tts-request": {
             fetchTtsResponse: async (url, init) => {
                 requests.push({ url, body: JSON.parse(init.body) });
-                return new Response("test-audio", { headers: { "Content-Type": "audio/wav" } });
+                return new Response(wave, { headers: { "Content-Type": "application/octet-stream" } });
             },
         },
         "./tts-pcm-player": {},
@@ -50,7 +51,8 @@ function setup() {
 test("Qwen Base 上传参考音频后，空音色 ID 可以合成且传递克隆参数", async () => {
     const app = setup();
     const audio = await app.synthesizeSpeech("测试回复", config());
-    assert.equal(await audio.text(), "test-audio");
+    assert.deepEqual(Buffer.from(await audio.arrayBuffer()), wave);
+    assert.equal(audio.type, "audio/wav");
     assert.equal(app.requests.length, 1);
     assert.equal(app.requests[0].url, "https://voice.example/v1/audio/speech");
     assert.deepEqual(app.requests[0].body, {
@@ -73,8 +75,14 @@ test("试听的非流式回退同样允许参考音频配合空音色 ID", async
     await app.speakSpeech("试听", config(), {
         playBlob: blob => { played = blob; return { promise: Promise.resolve(), abort() {} }; },
     }).promise;
-    assert.equal(await played.text(), "test-audio");
+    assert.deepEqual(Buffer.from(await played.arrayBuffer()), wave);
     assert.equal(app.requests.length, 1);
+});
+
+test("关闭语音合成的方案不会发起试听请求", async () => {
+    const app = setup();
+    await assert.rejects(app.speakSpeech("试听", config({ enableTTS: false })).promise, /已关闭合成/);
+    assert.equal(app.requests.length, 0);
 });
 
 test("没有参考文本时，流式克隆请求仍带参考音频并启用 x-vector 模式", () => {

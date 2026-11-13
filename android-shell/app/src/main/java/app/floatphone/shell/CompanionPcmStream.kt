@@ -3,6 +3,7 @@ package app.floatphone.shell
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
 import android.os.SystemClock
 import java.io.File
 import java.io.RandomAccessFile
@@ -24,6 +25,9 @@ class CompanionPcmStream(
     @Volatile private var cancelled = false
     @Volatile private var inputFinished = false
     @Volatile private var track: AudioTrack? = null
+    private val playbackLock = Object()
+    @Volatile private var paused = false
+    private var startRequested = false
     private var received = 0L
     private var worker: Thread? = null
 
@@ -42,10 +46,32 @@ class CompanionPcmStream(
 
     fun finish() { inputFinished = true }
 
+    fun pause() {
+        synchronized(playbackLock) {
+            paused = true
+            if (startRequested) track?.pause()
+        }
+    }
+
+    fun resume() = synchronized(playbackLock) {
+        if (cancelled) return@synchronized
+        paused = false
+        if (startRequested) track?.play()
+        playbackLock.notifyAll()
+    }
+
+    private fun waitForPlayback(): Boolean = synchronized(playbackLock) {
+        while (paused && !cancelled) playbackLock.wait()
+        !cancelled
+    }
+
     fun cancel() {
-        cancelled = true
+        synchronized(playbackLock) {
+            cancelled = true
+            runCatching { track?.pause() }
+            playbackLock.notifyAll()
+        }
         queue.clear()
-        runCatching { track?.pause() }
         worker?.interrupt()
     }
 
@@ -60,38 +86,57 @@ class CompanionPcmStream(
                     .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
                 .setBufferSizeInBytes(maxOf(minimum * 2, sampleRate / 2))
                 .setTransferMode(AudioTrack.MODE_STREAM).build()
-            track = next
+            synchronized(playbackLock) { track = next }
             require(next.state == AudioTrack.STATE_INITIALIZED)
             if (cancelled) return
+            val startThreshold = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                next.setStartThresholdInFrames((sampleRate / 50).coerceAtLeast(1))
+            } else next.bufferSizeInFrames
+            require(startThreshold > 0)
             val ready = File.createTempFile("stream-", ".wav", directory)
             file = ready
             var written = 0
             var started = false
+            fun write(bytes: ByteArray): Boolean {
+                var offset = 0
+                while (offset < bytes.size && waitForPlayback()) {
+                    val count = next.write(bytes, offset, bytes.size - offset, AudioTrack.WRITE_NON_BLOCKING)
+                    if (count < 0) throw IllegalStateException("PCM playback failed")
+                    if (count == 0) Thread.sleep(10) else offset += count
+                }
+                return !cancelled
+            }
             RandomAccessFile(ready, "rw").use { cache ->
                 cache.write(ByteArray(44))
-                next.play()
-                while (!cancelled) {
+                synchronized(playbackLock) {
+                    if (cancelled) return
+                    startRequested = true
+                    if (!paused) next.play()
+                }
+                while (waitForPlayback()) {
                     val bytes = queue.poll(100, TimeUnit.MILLISECONDS)
                     if (bytes == null) {
                         if (inputFinished && queue.isEmpty()) break
                         continue
                     }
-                    var offset = 0
-                    while (offset < bytes.size && !cancelled) {
-                        val count = next.write(bytes, offset, bytes.size - offset, AudioTrack.WRITE_BLOCKING)
-                        if (count <= 0) throw IllegalStateException("PCM playback failed")
-                        offset += count
-                        if (!started) { started = true; onStarted() }
-                    }
-                    if (cancelled) return
+                    if (!write(bytes)) return
+                    if (!started) { started = true; onStarted() }
                     cache.write(bytes)
                     written += bytes.size
                 }
                 if (cancelled) return
                 require(written > 0)
+                // Short clips can finish before AudioTrack has enough frames to start.
+                // Padding is only for playback; it is excluded from the replay file.
                 // Drain the small hardware buffer so the final syllable is not cut off.
-                val deadline = SystemClock.elapsedRealtime() + 5000
+                // An underrun can also re-arm the startup threshold near the end.
+                // Write one threshold of silence but wait for real samples only.
+                if (!write(ByteArray(startThreshold * 2))) return
+                var deadline = SystemClock.elapsedRealtime() + 5000
                 while (!cancelled && (next.playbackHeadPosition.toLong() and 0xffffffffL) < written / 2L) {
+                    val beforeWait = SystemClock.elapsedRealtime()
+                    if (!waitForPlayback()) return
+                    deadline += SystemClock.elapsedRealtime() - beforeWait
                     if (SystemClock.elapsedRealtime() > deadline) throw IllegalStateException("PCM drain timed out")
                     Thread.sleep(20)
                 }
@@ -108,7 +153,11 @@ class CompanionPcmStream(
         } catch (_: Exception) {
             if (!cancelled) onFailed()
         } finally {
-            runCatching { track?.release() }; track = null
+            synchronized(playbackLock) {
+                runCatching { track?.release() }
+                track = null
+                startRequested = false
+            }
             if (!completed) file?.delete()
         }
     }

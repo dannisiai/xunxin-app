@@ -1,3 +1,5 @@
+import { SpeechAudioError } from "./tts-audio-stream";
+
 /** Deadline covers response headers AND body; caller cancellation stays an AbortError. */
 export async function fetchTtsResponse(url: string, init: RequestInit, timeoutMs = 120_000): Promise<Response> {
     const controller = new AbortController();
@@ -6,9 +8,9 @@ export async function fetchTtsResponse(url: string, init: RequestInit, timeoutMs
     const abort = () => { controller.abort(external?.reason); cleanup(); };
     const cleanup = () => { clearTimeout(timer); external?.removeEventListener("abort", abort); };
     const failure = (error: unknown, receiving = false) => {
-        if (timedOut) return new Error(`语音合成超时（超过 ${Math.round(timeoutMs / 1000)} 秒）`);
+        if (timedOut) return new SpeechAudioError(`语音合成超时（超过 ${Math.round(timeoutMs / 1000)} 秒）`);
         if (!external?.aborted && (error instanceof TypeError || typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "NetworkError")) {
-            return new Error(receiving ? "接收语音时连接中断，请检查语音服务器和手机网络" : "无法建立语音连接，请检查接口地址、手机网络和 HTTPS 证书");
+            return new SpeechAudioError(receiving ? "接收语音时连接中断，请检查语音服务器和手机网络" : "无法建立语音连接，请检查接口地址、手机网络和 HTTPS 证书");
         }
         return error;
     };

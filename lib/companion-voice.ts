@@ -1,8 +1,9 @@
 import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
 import { splitBilingualText } from "./bilingual-text";
 import { requestStreamingSpeech, resolveVoiceConfig, synthesizeSpeech } from "./tts-service";
-import { isQwenTts } from "./qwen-tts";
-import { isPcmAudioResponse, openPcmAudioStream } from "./tts-audio-stream";
+import { supportsQwenPcmStream } from "./qwen-tts";
+import { voiceSynthesisBlockReason } from "./voice-mode";
+import { classifySpeechAudio, openPcmAudioStream, SpeechAudioError } from "./tts-audio-stream";
 
 const PREFIX = "ai_phone_companion_voice_v1:";
 registerDynamicPrefix(PREFIX);
@@ -10,6 +11,28 @@ export const COMPANION_VOICE_SETTINGS_EVENT = "companion-voice-settings-changed"
 const MAX_AUDIO_BYTES = 4 * 1024 * 1024;
 const CHUNK_SIZE = 48 * 1024;
 class CompanionVoiceError extends Error {}
+
+async function readAudioFile(response: Response, signal: AbortSignal): Promise<Blob> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new CompanionVoiceError("语音服务没有返回音频。");
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let length = 0, finished = false;
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const item = await reader.read();
+      signal.throwIfAborted();
+      if (item.done) { finished = true; break; }
+      length += item.value.length;
+      if (length > MAX_AUDIO_BYTES) throw new CompanionVoiceError("回复音频过长，请使用更简短的回复。");
+      chunks.push(new Uint8Array(item.value));
+    }
+    return new Blob(chunks, { type: response.headers.get("content-type") || "" });
+  } finally {
+    if (!finished) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
 
 export function loadCompanionVoiceEnabled(appId: "douyin" | "xiaohongshu"): boolean {
   return kvGet(PREFIX + appId) === "true";
@@ -48,7 +71,7 @@ export function companionSpeechText(text: string): string {
 
 /** The text request settles first; voice has its own cancellation and retry lifecycle. */
 export function createCompanionVoiceReplies(getBridge: () => CompanionVoiceBridge | undefined) {
-  let last: { request: VoiceRequest; text: string; audio?: Blob } | undefined;
+  let last: { request: VoiceRequest; text: string; audio?: Blob; useFileOnRetry?: boolean } | undefined;
   let active: AbortController | undefined;
   const matches = (detail?: Identity) => !detail || Boolean(last
     && (!detail.overlayId || last.request.overlayId === detail.overlayId)
@@ -69,6 +92,7 @@ export function createCompanionVoiceReplies(getBridge: () => CompanionVoiceBridg
     const controller = active = new AbortController();
     const { signal } = controller;
     const { overlayId, requestId, characterId } = entry.request;
+    let stage = "请求语音服务";
     try {
       const native = getBridge();
       if (!native?.beginCompanionAudio || !native.appendCompanionAudio || !native.finishCompanionAudio) {
@@ -76,21 +100,30 @@ export function createCompanionVoiceReplies(getBridge: () => CompanionVoiceBridg
       }
       if (!entry.audio) {
         const config = resolveVoiceConfig(characterId, "chat");
-        if (!config || config.enableTTS === false) throw new CompanionVoiceError("请先在语音设置中为角色配置并开启语音合成。");
+        const blocked = voiceSynthesisBlockReason(config);
+        if (blocked || !config) throw new CompanionVoiceError(blocked || "未找到当前角色的语音方案。");
         let audio: Blob | null;
-        if (isQwenTts(config) && native.beginCompanionPcm && native.appendCompanionPcm && native.finishCompanionPcm) {
-          const response = await requestStreamingSpeech(entry.text, config, signal);
-          if (isPcmAudioResponse(response)) {
+        if (!entry.useFileOnRetry && supportsQwenPcmStream(config) && native.beginCompanionPcm && native.appendCompanionPcm && native.finishCompanionPcm) {
+          // Only an explicit retry may synthesize again; it uses the more compatible mode.
+          entry.useFileOnRetry = true;
+          const received = await requestStreamingSpeech(entry.text, config, signal);
+          stage = "接收语音音频";
+          const { kind, response } = await classifySpeechAudio(received, signal, true);
+          if (kind === "pcm") {
             const stream = await openPcmAudioStream(response, signal);
             try {
               signal.throwIfAborted();
               if (last !== entry) return;
-              if (!native.beginCompanionPcm(overlayId, requestId, stream.sampleRate)) {
-                throw new CompanionVoiceError("流式语音暂时无法播放，请重新开启陪伴后重试。");
-              }
+              let started = false;
               for await (const chunk of stream.chunks) {
                 signal.throwIfAborted();
                 if (last !== entry) return;
+                if (!started) {
+                  if (!native.beginCompanionPcm(overlayId, requestId, stream.sampleRate)) {
+                    throw new CompanionVoiceError("悬浮窗无法启动 PCM 播放，点「重试语音」可改用完整音频。");
+                  }
+                  started = true;
+                }
                 const encoded = btoa(String.fromCharCode(...chunk));
                 while (true) {
                   signal.throwIfAborted();
@@ -110,10 +143,7 @@ export function createCompanionVoiceReplies(getBridge: () => CompanionVoiceBridg
             } finally { await stream.cancel(); }
           }
           // Reuse the same generation if a compatible server returns a file instead of PCM.
-          if (!(response.headers.get("content-type") || "").toLowerCase().startsWith("audio/")) {
-            await response.body?.cancel(); throw new CompanionVoiceError("语音接口没有返回可播放的音频。");
-          }
-          audio = await response.blob();
+          audio = await readAudioFile(response, signal);
         } else {
           audio = await synthesizeSpeech(entry.text, config, { signal });
         }
@@ -122,6 +152,7 @@ export function createCompanionVoiceReplies(getBridge: () => CompanionVoiceBridg
         if (audio.size > MAX_AUDIO_BYTES) throw new CompanionVoiceError("回复音频过长，请使用更简短的回复。");
         entry.audio = audio;
       }
+      stage = "传输音频到悬浮窗";
       const bytes = new Uint8Array(await entry.audio.arrayBuffer());
       signal.throwIfAborted();
       let binary = "";
@@ -139,8 +170,8 @@ export function createCompanionVoiceReplies(getBridge: () => CompanionVoiceBridg
     } catch (error) {
       if (!signal.aborted && last === entry) {
         // Provider errors can contain credentials. Keep the native status user-facing.
-        const message = error instanceof CompanionVoiceError
-          ? error.message : "语音合成失败，文字回复已保留，可在完整对话中点重试。";
+        const message = error instanceof CompanionVoiceError || error instanceof SpeechAudioError
+          ? error.message : `${stage}失败，文字回复已保留，可在完整对话中点重试。`;
         try { getBridge()?.failCompanionAudio?.(overlayId, requestId, message); } catch { /* Host closed. */ }
       }
     } finally {

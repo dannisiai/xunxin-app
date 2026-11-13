@@ -58,58 +58,20 @@ keytool -list -v -keystore C:\private\xunxin-release.jks -alias xunxin
 
 此前 1.2.8/1.2.9 使用临时 Debug 签名，且两版证书已确认不同。旧私钥若未保留，无法直接换签覆盖；OTA 也不能绕过 Android 同签名规则。必须先从旧版导出完整应用备份，再手动迁移到包含 OTA 代码的首次固定签名版并导入备份，此后才能同签名 OTA。没有 OTA 代码的旧 APK 不会因服务器新增清单而获得更新能力。
 
-## GitHub 部署
+## 日本服务器部署
 
-默认更新源为固定通道：
+新版固定从 `https://xunxin.shop/downloads/android/version.json` 检查更新，APK 必须来自同一 HTTPS 源。更新弹窗没有线路选择，客户端不跟随重定向，也不使用历史清单中的备用地址。旧安装包在覆盖更新前仍使用自身内置的旧规则。
 
-`https://github.com/dannisiai/xunxin-app/releases/download/android-ota-stable/version.json`
-
-该地址在首次成功部署前不一定存在。专用 tag 避免其他 Debug Release 影响 latest。新版本必须继续指向同一个稳定通道，地址迁移时保留旧地址或使用有效 HTTPS 跳转。
-
-1. 提交本次代码到构建仓库。
-2. 在 Settings → Secrets and variables → Actions 配置 Secrets：SHELL_KEYSTORE_BASE64（固定 jks 的 Base64）、SHELL_KEYSTORE_PASSWORD、SHELL_KEY_ALIAS、SHELL_KEY_PASSWORD。
-3. 配置 Repository variable SHELL_SIGNING_CERT_SHA256：真实证书 SHA256，去掉冒号，64 位十六进制字符串。
-4. Actions → Publish signed Android OTA → Run workflow，源码引用 `source_ref` 默认 `android-ota-production`，也可以填写已核实的不可变提交 SHA。填写比所有已分发 APK 都大的 version_code、版本名、更新日志和 force_update。正式 OTA 基线的显示版本名为 `1.0.0`，内部 versionCode 为 `14`，高于已分发的 code=13；后续使用 15、16……递增。不要依赖版本名排序。
-5. 工作流强制要求固定密钥，使用 apksigner 验证 APK，并与公开指纹核对；不一致即失败，不回退 Debug。版本号、名称、包名和 sha256 均从实际 APK 获取。
-6. 先发布不可变 APK Release，成功后才替换 android-ota-stable 中的 version.json。旧 APK 不覆盖；发布中途失败不会让客户端安装未完成的新文件。GitHub --clobber 替换清单有短暂 404 的可能，客户端保留旧策略与断点。
-7. 确认目标网络可访问 APK 与清单，再分发首个正式 OTA 基线包并完成下方验收。
-
-GitHub CLI 配置示例，不把私钥打印到终端：
+1. 使用现有正式签名准备 APK。构建工作流仅生成产物；本机签名脚本默认将 APK 和清单整理到 `japan-ota` 目录。
+2. 选择高于已发布版本的 versionCode。若只需要从已签名 APK 生成清单，执行以下命令。APK 地址由实际签名包的版本名和版本号生成，固定为 `xunxin-版本名-版本号.apk`。
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\private\xunxin-release.jks')) | gh secret set SHELL_KEYSTORE_BASE64 --repo dannisiai/xunxin-app
-gh secret set SHELL_KEYSTORE_PASSWORD --repo dannisiai/xunxin-app
-gh secret set SHELL_KEY_ALIAS --repo dannisiai/xunxin-app
-gh secret set SHELL_KEY_PASSWORD --repo dannisiai/xunxin-app
-gh variable set SHELL_SIGNING_CERT_SHA256 --repo dannisiai/xunxin-app --body '替换为真实64位公开指纹'
+python scripts/create-android-update-feed.py --apk android-shell/app/build/outputs/apk/release/app-release.apk --notes-file release-notes.txt --expected-certificate-sha256 真实64位公开证书指纹 --output release/version.json
 ```
 
-Fork 的新工作流使用该 fork 仓库的固定通道；手动构建时自行传入 SHELL_UPDATE_URL。
+3. 将 APK 按清单中的名称上传到日本服务器的 `/srv/xunxin-site/downloads/android/`。先核对 SHA-256、HTTPS 直链和断点下载，再在同目录原子替换 `version.json`。不要先发布清单再上传 APK。
 
-## 自有 HTTPS/CDN 部署
-
-沿用原打包方法准备前端和本地 Node 资源，然后配置构建环境：
-
-```powershell
-$env:SHELL_VERSION_CODE='14'
-$env:SHELL_VERSION_NAME='1.3.0'
-$env:SHELL_UPDATE_URL='https://updates.example.com/xunxin/version.json'
-$env:SHELL_KEYSTORE_FILE='C:\private\xunxin-release.jks'
-# 密码与 alias 通过安全环境注入，不写入源码。
-gradle -p android-shell assembleRelease
-```
-
-把 APK 放到不可变 HTTPS 地址后，使用 Android SDK build-tools 生成真实清单：
-
-```powershell
-python scripts/create-android-update-feed.py --apk android-shell/app/build/outputs/apk/release/app-release.apk --apk-url https://updates.example.com/xunxin/xunxin-1.3.0.apk --notes-file release-notes.txt --expected-certificate-sha256 真实64位公开证书指纹 --output release/version.json
-```
-
-强制更新增加 --force-update。脚本通过 ANDROID_HOME/ANDROID_SDK_ROOT 查找工具，也可指定 --aapt 和 --apksigner。最后在服务器原子替换 version.json；不能先更新清单再上传 APK。示例 JSON 的全零摘要是假数据，禁止直接部署。
-
-建议清单 Cache-Control: no-cache；APK 提供 Content-Length、Accept-Ranges: bytes、强 ETag/Last-Modified 及正确 206/Content-Range。没有 Range 仍可下载，但会从头开始。OTA 由原生请求，不需要浏览器 CORS。单包限制 2 GiB。
-
-所有更新地址必须 HTTPS，不接受 URL 内嵌凭据或片段，允许正常签名查询参数；禁止 HTTPS→HTTP 跳转及证书/主机名校验绕过。原项目仅本机 Node 的 localhost HTTP 例外保留，但不能用于 OTA。
+强制更新增加 `--force-update`；也可指定 `--aapt` 和 `--apksigner`。清单建议使用 Cache-Control: no-cache；APK 应返回正确的 Content-Length、ETag 或 Last-Modified，以及 Range 请求的 206 和 Content-Range。签名、版本、包名和 SHA-256 校验保持不变。
 
 ## 验收步骤：仅提供，本次未执行
 
@@ -143,6 +105,6 @@ python scripts/create-android-update-feed.py --apk android-shell/app/build/outpu
 
 初始实现阶段只做静态源代码、TypeScript 类型、XML/JSON/YAML/Python 语法和调用路径检查，静态报告位于 C:/rjl/android-ota-implementation-20261109/。后续生产部署已通过 GitHub Actions 的前端构建、Android Release 编译和 lint，以及 APK 签名与版本核验；实际发布状态见 [android-ota-production.md](android-ota-production.md)。未运行应用、下载/安装功能测试、模拟器、真机或数据迁移验收，不能据此宣称设备兼容或覆盖更新实测通过。
 
-上线需配置固定签名、发布首个基线 APK 和有效清单，并完成上表验收。尤其验证 Android 8+、厂商 ROM、实际 CDN Range 和旧版数据迁移。部署是否完成以 GitHub 工作流结论、Release 资产和 HTTPS 清单的实际状态为准。
+上线需配置固定签名、发布首个基线 APK 和有效清单，并完成上表验收。尤其验证 Android 8+、厂商 ROM、实际 CDN Range 和旧版数据迁移。部署是否完成以日本服务器的 HTTPS 清单和 APK 实际状态为准。
 
 官方依据：[应用签名](https://developer.android.com/studio/publish/app-signing)、[FileProvider](https://developer.android.com/reference/androidx/core/content/FileProvider)、[安装来源授权](https://developer.android.com/reference/android/content/pm/PackageManager#canRequestPackageInstalls())、[Google apksig](https://android.googlesource.com/platform/tools/apksig/)。
